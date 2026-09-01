@@ -1,7 +1,24 @@
+import fs from 'fs';
+import path from 'path';
 import { createClient } from '@supabase/supabase-js';
 
+// Auto-load .env.local if present
+const envPath = path.resolve(process.cwd(), '.env.local');
+if (fs.existsSync(envPath)) {
+  const content = fs.readFileSync(envPath, 'utf-8');
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const [k, ...v] = trimmed.split('=');
+      if (k && v.length > 0 && !process.env[k.trim()]) {
+        process.env[k.trim()] = v.join('=').trim();
+      }
+    }
+  }
+}
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:54321';
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: {
@@ -24,7 +41,10 @@ async function seed() {
 
   let adminUserId = adminAuth?.user?.id;
 
-  if (adminErr && adminErr.message.includes('already registered')) {
+  if (adminErr) {
+    console.log('adminErr:', adminErr);
+  }
+  if (adminErr && (adminErr.message.includes('already registered') || adminErr.message.includes('already been registered') || adminErr.code === 'email_exists')) {
     console.log('Admin user exists, fetching id...');
     const { data: users } = await supabase.auth.admin.listUsers();
     adminUserId = users?.users?.find((u) => u.email === 'admin@smarthr.com')?.id;
@@ -81,7 +101,7 @@ async function seed() {
       user_metadata: { full_name: cand.full_name },
     });
 
-    if (candErr && candErr.message.includes('already registered')) {
+    if (candErr && (candErr.message.includes('already registered') || candErr.message.includes('already been registered') || candErr.code === 'email_exists')) {
       const { data: users } = await supabase.auth.admin.listUsers();
       candUserId = users?.users?.find((u) => u.email === cand.email)?.id;
     } else {
