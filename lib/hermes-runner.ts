@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
 
@@ -22,17 +22,89 @@ export interface HermesCallResponse {
 }
 
 /**
- * Execute prompt via Local Hermes CLI Agent
+ * Execute prompt on remote VPS Hermes Agent via SSH with stdin piping (safe for multi-line prompts)
+ */
+function execSshHermes(
+  vpsUser: string,
+  vpsHost: string,
+  vpsPort: string,
+  prompt: string,
+  timeoutMs = 60000
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "ssh",
+      [
+        "-p",
+        vpsPort,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ConnectTimeout=8",
+        `${vpsUser}@${vpsHost}`,
+        'hermes -z "$(cat)"',
+      ],
+      {
+        timeout: timeoutMs,
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    child.on("error", (err) => {
+      reject(err);
+    });
+
+    child.on("close", (code) => {
+      if (code === 0 && stdout.trim().length > 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(`Hermes VPS exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
+      }
+    });
+
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+/**
+ * Execute prompt via Local or VPS Hermes CLI Agent
  */
 async function callHermesCli(
   combinedPrompt: string,
   cliPathOverride?: string,
   timeoutMs = 60000
 ): Promise<string> {
+  const vpsHost = process.env.HERMES_VPS_HOST;
+
+  // 1. If HERMES_VPS_HOST is configured, prioritize VPS Remote Hermes Agent
+  if (vpsHost && (!process.env.HERMES_TARGET || process.env.HERMES_TARGET === "vps")) {
+    const vpsPort = process.env.HERMES_VPS_PORT || "4422";
+    const vpsUser = process.env.HERMES_VPS_USER || "root";
+    try {
+      const output = await execSshHermes(vpsUser, vpsHost, vpsPort, combinedPrompt, timeoutMs);
+      if (output && output.trim().length > 0) {
+        return output.trim();
+      }
+    } catch (vpsErr: any) {
+      console.warn(`[Hermes Runner] VPS SSH execution failed (${vpsErr?.message}), checking local binary fallback...`);
+    }
+  }
+
+  // 2. Local CLI binary fallback
   const possiblePaths = [
     cliPathOverride,
     process.env.HERMES_CLI_PATH,
-    "/Users/bramastyokusumo/.local/bin/hermes",
     "/usr/local/bin/hermes",
     "hermes",
   ].filter(Boolean) as string[];
@@ -46,36 +118,7 @@ async function callHermesCli(
   }
 
   if (!selectedCli) {
-    const vpsHost = process.env.HERMES_VPS_HOST;
-    if (vpsHost) {
-      const vpsPort = process.env.HERMES_VPS_PORT || "4422";
-      const vpsUser = process.env.HERMES_VPS_USER || "root";
-      const { stdout, stderr } = await execFileAsync(
-        "ssh",
-        [
-          "-p",
-          vpsPort,
-          "-o",
-          "StrictHostKeyChecking=no",
-          "-o",
-          "ConnectTimeout=5",
-          `${vpsUser}@${vpsHost}`,
-          "hermes",
-          "-z",
-          combinedPrompt,
-        ],
-        {
-          timeout: timeoutMs,
-          maxBuffer: 10 * 1024 * 1024,
-        }
-      );
-      if (!stdout && stderr) {
-        throw new Error(`Hermes VPS stderr: ${stderr}`);
-      }
-      return (stdout || "").trim();
-    }
-
-    throw new Error("Hermes CLI binary not found on local system or VPS.");
+    throw new Error("Hermes CLI binary not found on VPS or local system.");
   }
 
   const env = {
@@ -94,7 +137,7 @@ async function callHermesCli(
   );
 
   if (!stdout && stderr) {
-    throw new Error(`Hermes CLI stderr: ${stderr}`);
+    throw new Error(`Hermes Local CLI stderr: ${stderr}`);
   }
 
   return (stdout || "").trim();
@@ -196,7 +239,7 @@ async function callHermesApi(
 
 /**
  * Universal Hermes Runner:
- * Automatically uses Local Hermes CLI (if enabled) and gracefully falls back to API.
+ * Automatically uses Local/VPS Hermes CLI (if enabled) and gracefully falls back to API.
  */
 export async function runHermesAgent(params: HermesCallParams): Promise<HermesCallResponse> {
   const mode = (process.env.HERMES_MODE || "cli").toLowerCase();
@@ -205,7 +248,9 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
   // Mode 1: Try CLI first if mode is 'cli'
   if (mode === "cli") {
     try {
-      console.log(`\x1b[36m[Hermes Agent]\x1b[0m 🚀 Mengirim prompt ke Hermes Agent Lokal (CLI)...`);
+      const vpsHost = process.env.HERMES_VPS_HOST || "103.30.146.87";
+      console.log(`\n\x1b[1m\x1b[35m[HERMES ROUTE: CLI / VPS]\x1b[0m 🖥️  Mengeksekusi melalui \x1b[32mHermes Agent Framework CLI (VPS: ${vpsHost})\x1b[0m...`);
+      
       const combinedPrompt = params.systemPrompt
         ? `${params.systemPrompt}\n\n${params.userPrompt}`
         : params.userPrompt;
@@ -214,34 +259,38 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
       if (output && output.trim().length > 0) {
-        console.log(`\x1b[32m[Hermes Agent]\x1b[0m ✅ Berhasil diproses oleh Hermes Agent Lokal! (Durasi: ${elapsed}s)`);
+        console.log(`\x1b[1m\x1b[32m[HERMES ROUTE: CLI / VPS]\x1b[0m ✅ SUKSES dieksekusi oleh \x1b[32mHermes Agent CLI\x1b[0m (Durasi: ${elapsed}s | Source: \x1b[33m"cli"\x1b[0m)\n`);
         return {
           success: true,
           content: output,
           source: "cli",
-          modelUsed: "Hermes Agent Local (CLI)",
+          modelUsed: `Hermes Agent CLI (VPS ${vpsHost})`,
         };
       }
     } catch (cliErr: any) {
-      console.warn("\x1b[33m[Hermes Agent]\x1b[0m ⚠️ Hermes CLI gagal/timeout, beralih ke fallback API:", cliErr?.message || cliErr);
+      console.warn(`\x1b[1m\x1b[33m[HERMES ROUTE: FAILOVER]\x1b[0m ⚠️  Hermes CLI VPS gagal/timeout (${cliErr?.message || cliErr}) -> Beralih ke \x1b[36mFallback Direct API Router\x1b[0m...`);
     }
   }
 
-  // Mode 2: Call API (either by config or as CLI fallback)
+  // Mode 2: Call Direct API Router (either by config or as CLI fallback)
   try {
-    console.log(`\x1b[36m[Hermes Agent]\x1b[0m 🌐 Memproses via Hermes API Router...`);
+    const isFallback = mode === "cli";
+    const routeLabel = isFallback ? "FALLBACK DIRECT API" : "DIRECT API ROUTER";
+    console.log(`\x1b[1m\x1b[36m[HERMES ROUTE: ${routeLabel}]\x1b[0m 🌐 Mengeksekusi via \x1b[36mNara Router API Direct\x1b[0m...`);
+    
     const { content, model } = await callHermesApi(params, params.timeoutMs ?? 45000);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`\x1b[32m[Hermes Agent]\x1b[0m ✅ Berhasil diproses via API (${model}) (Durasi: ${elapsed}s)`);
+    
+    console.log(`\x1b[1m\x1b[32m[HERMES ROUTE: ${routeLabel}]\x1b[0m ✅ SUKSES via \x1b[36mNara Router (${model})\x1b[0m (Durasi: ${elapsed}s | Source: \x1b[33m"${isFallback ? "fallback" : "api"}"\x1b[0m)\n`);
 
     return {
       success: true,
       content,
-      source: mode === "cli" ? "fallback" : "api",
-      modelUsed: `Hermes / ${model}`,
+      source: isFallback ? "fallback" : "api",
+      modelUsed: `Nara Router / ${model}`,
     };
   } catch (apiErr: any) {
-    console.error("\x1b[31m[Hermes Agent]\x1b[0m ❌ Seluruh pemanggilan Hermes gagal:", apiErr?.message);
+    console.error(`\x1b[1m\x1b[31m[HERMES ROUTE: ERROR]\x1b[0m ❌ Seluruh pemanggilan gagal:`, apiErr?.message);
     return {
       success: false,
       content: "",
