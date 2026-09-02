@@ -8,7 +8,13 @@
     "start": "next start",
     "lint": "next lint",
     "test:hermes": "npx tsx scripts/test-hermes-connection.ts",
-    "hermes:screen": "npx tsx scripts/hermes-screener-task.ts"
+    "hermes:screen": "npx tsx scripts/hermes-screener-task.ts",
+    "test:interview-script": "npx tsx scripts/test-interview-script.ts",
+    "test:followup": "npx tsx scripts/test-followup.ts",
+    "test:evaluator": "npx tsx scripts/test-evaluator.ts",
+    "test:bands": "npx tsx scripts/test-screening-bands.ts",
+    "test:screener": "npx tsx scripts/test-screener.ts",
+    "test:screener-negative": "npx tsx scripts/test-negative-screener.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

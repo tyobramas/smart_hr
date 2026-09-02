@@ -460,7 +460,7 @@ export function AdminApplicationModal({
                 </div>
               </div>
 
-              {/* AI Executive Synthesis Banner (Powered by Qwen / DeepSeek) */}
+              {/* AI Executive Synthesis Banner (Powered by Hermes AI Engine) */}
               <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-sm space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-3">
@@ -664,6 +664,22 @@ export function AdminApplicationModal({
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
                     Transkrip dan skor evaluasi AI akan otomatis terisi secara real-time saat kandidat menyelesaikan sesi wawancara.
                   </p>
+                </div>
+              ) : !interviewEval ? (
+                <div className="p-8 bg-amber-50/70 rounded-3xl border border-amber-200 text-center space-y-3">
+                  <Clock className="w-8 h-8 text-amber-500 mx-auto animate-pulse" />
+                  <h4 className="text-sm font-black text-slate-900">Menunggu Evaluasi Hermes Assessor</h4>
+                  <p className="text-xs text-slate-600 max-w-md mx-auto">
+                    Sesi wawancara telah selesai dan transkrip tersimpan. Klik tombol di bawah untuk meminta Hermes mengevaluasi transkrip secara objektif.
+                  </p>
+                  <button
+                    onClick={handleReevaluateInterview}
+                    disabled={isReanalyzingInterview}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isReanalyzingInterview ? "Mengevaluasi..." : "Evaluasi Sekarang dengan Hermes"}</span>
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-6">

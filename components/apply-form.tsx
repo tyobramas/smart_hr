@@ -232,7 +232,9 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
   if (screeningResult && screeningResult.success) {
     const score = screeningResult.score ?? 0;
     const threshold = screeningResult.minScoreThreshold ?? job.min_score_threshold ?? 70;
-    const isPassed = score >= threshold;
+    const isPassed = screeningResult.outcome
+      ? screeningResult.outcome === "passed"
+      : score >= threshold;
 
     // Derived metric breakdown for visualization
     const technicalMatch = Math.min(100, Math.max(20, isPassed ? Math.round(score * 1.02) : Math.round(score * 0.9)));

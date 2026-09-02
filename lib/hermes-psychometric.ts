@@ -1,4 +1,4 @@
-import { DeepSeekPsychometricAnalysis } from "@/types/database";
+import { HermesPsychometricAnalysis } from "@/types/database";
 import { ALL_50_PSYCHOMETRIC_QUESTIONS } from "@/lib/psychometric-questions";
 import { runHermesAgent } from "@/lib/hermes-runner";
 
@@ -30,7 +30,7 @@ interface AnalyzeMultiFrameworkParams {
   rawAnswers: Record<string, any>;
 }
 
-function parseJsonSafely(raw: string): DeepSeekPsychometricAnalysis | null {
+function parseJsonSafely(raw: string): HermesPsychometricAnalysis | null {
   try {
     let cleaned = raw
       .replace(/^```json\s*/im, "")
@@ -40,14 +40,21 @@ function parseJsonSafely(raw: string): DeepSeekPsychometricAnalysis | null {
 
     const startIdx = cleaned.indexOf("{");
     const endIdx = cleaned.lastIndexOf("}");
-    if (startIdx !== -1 && endIdx !== -1) {
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
       cleaned = cleaned.substring(startIdx, endIdx + 1);
     }
 
     // Remove trailing commas before } or ]
     cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
 
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    if (!parsed.siapa_kandidat_ini || !parsed.validasi_kejujuran_dan_konsistensi) {
+      return null;
+    }
+
+    return parsed as HermesPsychometricAnalysis;
   } catch (e1) {
     try {
       const extractString = (key: string): string => {
@@ -108,7 +115,7 @@ function parseJsonSafely(raw: string): DeepSeekPsychometricAnalysis | null {
  */
 export async function runHermesPsychometricAnalysis(
   params: AnalyzeMultiFrameworkParams
-): Promise<DeepSeekPsychometricAnalysis> {
+): Promise<HermesPsychometricAnalysis> {
   const systemPrompt = `Anda adalah Master Psychometrician & Executive Organizational Psychologist Senior.
 Tugas Anda: Menggabungkan hasil tes 4 framework psikometri (MBTI Cognitive Style, DISC Work Behavior, Big Five/OCEAN Personality Traits, dan PAPI Kostick Work Needs) menjadi profil psikometri eksekutif yang holistik, tajam, berwawasan mendalam, dan bebas bias.
 
@@ -202,7 +209,12 @@ Kualifikasi: ${params.jobRequirements}
   if (response.success && response.content) {
     const parsed = parseJsonSafely(response.content);
     if (parsed) {
-      return parsed;
+      return {
+        ...parsed,
+        engine: response.modelUsed || "Hermes Agent",
+        source: response.source,
+        analyzed_at: new Date().toISOString(),
+      } as any;
     }
   }
 

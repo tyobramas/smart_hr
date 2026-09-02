@@ -15,6 +15,8 @@ SET row_security = off;
 
 CREATE SCHEMA IF NOT EXISTS "public";
 
+CREATE EXTENSION IF NOT EXISTS "vector" WITH SCHEMA "public";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "public";
 
 ALTER SCHEMA "public" OWNER TO "pg_database_owner";
 

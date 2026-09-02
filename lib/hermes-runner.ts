@@ -10,6 +10,7 @@ export interface HermesCallParams {
   temperature?: number;
   maxTokens?: number;
   modelOverride?: string;
+  timeoutMs?: number;
 }
 
 export interface HermesCallResponse {
@@ -45,7 +46,36 @@ async function callHermesCli(
   }
 
   if (!selectedCli) {
-    throw new Error("Hermes CLI binary not found on this system.");
+    const vpsHost = process.env.HERMES_VPS_HOST;
+    if (vpsHost) {
+      const vpsPort = process.env.HERMES_VPS_PORT || "4422";
+      const vpsUser = process.env.HERMES_VPS_USER || "root";
+      const { stdout, stderr } = await execFileAsync(
+        "ssh",
+        [
+          "-p",
+          vpsPort,
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "ConnectTimeout=5",
+          `${vpsUser}@${vpsHost}`,
+          "hermes",
+          "-z",
+          combinedPrompt,
+        ],
+        {
+          timeout: timeoutMs,
+          maxBuffer: 10 * 1024 * 1024,
+        }
+      );
+      if (!stdout && stderr) {
+        throw new Error(`Hermes VPS stderr: ${stderr}`);
+      }
+      return (stdout || "").trim();
+    }
+
+    throw new Error("Hermes CLI binary not found on local system or VPS.");
   }
 
   const env = {
@@ -97,10 +127,11 @@ async function callHermesApi(
     new Set([
       primaryModel,
       "mistral-medium-3-5",
-      "qwen-3.8-max-free",
-      "stepfun-3.7-flash",
+      "qwen3.8-flash-free",
+      "qwen3.7-flash",
       "agnes-2.0-flash",
-      "nousresearch/hermes-3-llama-3.1-70b",
+      "stepfun-3.7-flash",
+      "glm-5.3-flash-free",
     ])
   );
 
@@ -110,12 +141,19 @@ async function callHermesApi(
   }
   messages.push({ role: "user", content: params.userPrompt });
 
+  const deadline = Date.now() + timeoutMs;
   let lastError: any = null;
 
   for (const model of candidateModels) {
+    const remaining = deadline - Date.now();
+    if (remaining < 3000) {
+      console.warn(`[Hermes API] Deadline total terlampaui, berhenti mencoba model lain.`);
+      break;
+    }
+
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), remaining);
 
       const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
@@ -172,7 +210,7 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
         ? `${params.systemPrompt}\n\n${params.userPrompt}`
         : params.userPrompt;
 
-      const output = await callHermesCli(combinedPrompt);
+      const output = await callHermesCli(combinedPrompt, undefined, params.timeoutMs ?? 60000);
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
       if (output && output.trim().length > 0) {
@@ -192,7 +230,7 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
   // Mode 2: Call API (either by config or as CLI fallback)
   try {
     console.log(`\x1b[36m[Hermes Agent]\x1b[0m 🌐 Memproses via Hermes API Router...`);
-    const { content, model } = await callHermesApi(params);
+    const { content, model } = await callHermesApi(params, params.timeoutMs ?? 45000);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`\x1b[32m[Hermes Agent]\x1b[0m ✅ Berhasil diproses via API (${model}) (Durasi: ${elapsed}s)`);
 

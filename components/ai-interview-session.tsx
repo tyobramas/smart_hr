@@ -705,7 +705,7 @@ export function AIInterviewSession({ app }: AIInterviewSessionProps) {
                 </p>
               </div>
               <div className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] font-bold border border-blue-100">
-                DeepSeek-V4
+                Hermes AI
               </div>
             </div>
 

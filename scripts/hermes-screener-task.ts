@@ -11,6 +11,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { runHermesCvScreening } from "../lib/hermes-screener";
 import { extractTextFromCvFile } from "../lib/cv-parser";
+import { classifyScreening, SCREENING_BANDS } from "../lib/screening-bands";
 import fs from "fs";
 import path from "path";
 
@@ -42,8 +43,8 @@ async function main() {
   console.log("🤖 HERMES AUTONOMOUS CANDIDATE SCREENER AGENT");
   console.log("==================================================");
   console.log(`Target Supabase: ${supabaseUrl}`);
-  console.log(`Target Model:    ${process.env.NARA_ROUTER_MODEL || "deepseek-v4-pro-free"}`);
-  console.log(`Router Base URL: ${process.env.NARA_ROUTER_BASE_URL || "https://router.bynara.id/v1"}\n`);
+  console.log(`Target Model:    ${process.env.HERMES_MODEL || process.env.NARA_ROUTER_MODEL || "mistral-medium-3-5"}`);
+  console.log(`Router Base URL: ${process.env.HERMES_BASE_URL || process.env.NARA_ROUTER_BASE_URL || "https://router.bynara.id/v1"}\n`);
 
   // Fetch pending / unscored applications
   const { data: apps, error } = await supabase
@@ -106,22 +107,38 @@ async function main() {
       cvText,
     });
 
+    const decision = classifyScreening({
+      score: result.success ? result.score ?? null : null,
+      aiSucceeded: result.success,
+      cvTextLength: cvText.trim().length,
+      jobMinScoreThreshold: (app as any).job?.min_score_threshold,
+    });
+
     if (result.success && result.score !== null) {
-      console.log(`  ✅ Evaluasi Selesai! Skor: ${result.score}/100 | Status: ${result.parsedEvaluation?.status_kelayakan || "SCREENED"}`);
+      console.log(`  ✅ Evaluasi Selesai! Skor: ${result.score}/100 | Outcome: ${decision.outcome} -> Status: ${decision.status}`);
+
+      const analysisJson = {
+        ...(result.analysisJson || (app as any).cv_analysis_json || {}),
+        screening_outcome: decision.outcome,
+        screening_label: decision.label,
+        effective_pass_min: decision.effectivePassMin,
+        bands: SCREENING_BANDS,
+        cv_text_length: cvText.trim().length,
+      };
 
       const { error: updateErr } = await supabase
         .from("applications")
         .update({
           cv_score: result.score,
-          cv_analysis_json: result.analysisJson,
-          status: "screened",
+          cv_analysis_json: analysisJson,
+          status: decision.status,
         })
         .eq("id", app.id);
 
       if (updateErr) {
         console.error(`  ❌ Gagal update status di database: ${updateErr.message}`);
       } else {
-        console.log(`  💾 Berhasil diperbarui di Supabase!`);
+        console.log(`  💾 Berhasil diperbarui di Supabase! (Status: ${decision.status})`);
         processedCount++;
       }
     } else {

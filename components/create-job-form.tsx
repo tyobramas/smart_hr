@@ -198,7 +198,7 @@ export function CreateJobForm() {
               <Award className="w-4 h-4 text-amber-500 absolute left-3 top-3" />
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              Skor minimal kecocokan kualifikasi CV saat dievaluasi AI.
+              Skor minimal kelulusan otomatis (standar minimum sistem adalah 71). Nilai di atas 71 akan menaikkan standar kelulusan lowongan ini.
             </p>
           </div>
 

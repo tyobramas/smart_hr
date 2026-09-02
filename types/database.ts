@@ -26,10 +26,21 @@ export interface Job {
   location: string;
   employment_type: string;
   min_score_threshold: number;
+  interview_blueprints_json?: InterviewScriptItem[] | null;
   is_active: boolean;
   created_by: string;
   created_at: string;
   creator?: Profile;
+}
+
+export interface InterviewScriptItem {
+  tag: string;
+  title: string;
+  required_topics: string[];
+  question_text: string;
+  scenario_context: string;
+  what_good_looks_like: string[];
+  prepared_probe: string;
 }
 
 export interface DeepSeekPsychometricAnalysis {
@@ -51,6 +62,8 @@ export interface DeepSeekPsychometricAnalysis {
   panduan_supervisi_manajer: string; // Tips atasan memimpin & mendelegasikan tugas
   rekomendasi_pertanyaan_wawancara_psikologis: string[]; // Deep behavioral questions
 }
+
+export type HermesPsychometricAnalysis = DeepSeekPsychometricAnalysis;
 
 export interface PersonalityTestResult {
   completed_at: string;
@@ -112,6 +125,8 @@ export interface InterviewMessage {
   question_type?: "core" | "follow_up";
   gap_targeted?: string;
   reason?: string;
+  quoted_span?: string;
+  question_source?: "hermes" | "prepared_probe" | "script";
 }
 
 export interface ConfidenceEvaluation {
@@ -125,21 +140,35 @@ export interface ConfidenceEvaluation {
   };
 }
 
+export interface InterviewCompetencyScore {
+  tag: string;
+  skor: number;
+  catatan: string;
+}
+
+export interface InterviewEvaluation {
+  skor_kompetensi: number; // 0 - 100
+  ringkasan_performa: string;
+  rekomendasi_keputusan: "Recommended" | "Consider" | "Not Recommended";
+  kekuatan_teramati: string[];
+  catatan_evaluasi: string[];
+  skor_per_kompetensi?: InterviewCompetencyScore[];
+  confidence_scoring?: ConfidenceEvaluation;
+  engine?: string;
+  source?: string;
+  evaluated_at?: string;
+}
+
 export interface InterviewSessionTranscript {
   session_id: string;
   started_at: string;
   completed_at?: string;
   duration_seconds: number;
   competencies_tested: string[];
+  blueprints?: InterviewScriptItem[];
   messages: InterviewMessage[];
-  overall_evaluation?: {
-    skor_kompetensi: number; // 0 - 100
-    ringkasan_performa: string;
-    rekomendasi_keputusan: "Recommended" | "Consider" | "Not Recommended";
-    kekuatan_teramati: string[];
-    catatan_evaluasi: string[];
-    confidence_scoring?: ConfidenceEvaluation;
-  };
+  evaluation_status?: "completed" | "pending";
+  overall_evaluation?: InterviewEvaluation;
 }
 
 export interface Application {

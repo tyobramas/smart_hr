@@ -8,39 +8,54 @@ import {
   Job,
   InterviewMessage,
   InterviewSessionTranscript,
-  AIInterviewQuestionCore,
-  AIInterviewQuestionFollowUp,
+  InterviewScriptItem,
 } from "@/types/database";
 import {
-  runAIInterviewGenerator,
-  evaluateInterviewSession,
-  normalizeSpeechTranscript,
-} from "@/lib/deepseek-interview";
+  generateInterviewScript,
+  generateFollowUp,
+  evaluateInterviewSessionHermes,
+} from "@/lib/hermes-interview";
+import { normalizeSpeechTranscript } from "@/lib/speech-normalizer";
 
-// Competencies to assess for the interview
-const INTERVIEW_COMPETENCY_BLUEPRINTS = [
-  {
-    tag: "problem_solving_and_debugging",
-    title: "Pemecahan Masalah & Penanganan Krisis",
-    required_topics: ["debugging production issues", "analisis akar masalah (root cause)", "penyelesaian insiden kritis"],
-    avoided_topics: ["gaji sebelumnya", "keluarga", "agama", "kehidupan pribadi"],
-    max_follow_ups: 1,
-  },
-  {
-    tag: "technical_tradeoffs_and_architecture",
-    title: "Pengambilan Keputusan & Arsitektur Teknis",
-    required_topics: ["trade-off keputusan teknis", "pertimbangan skalabilitas dan clean code", "standar kualitas arsitektur"],
-    avoided_topics: ["usia", "status menikah", "orientasi seksual"],
-    max_follow_ups: 1,
-  },
-  {
-    tag: "collaboration_and_ownership",
-    title: "Kepemilikan Tugas & Kolaborasi Tim",
-    required_topics: ["komunikasi teknis antartim", "kepemilikan mandiri atas tugas", "resolusi silang pendapat teknis"],
-    avoided_topics: ["kondisi kesehatan", "alamat rumah", "kehamilan"],
-    max_follow_ups: 1,
-  },
-];
+const FOLLOW_UPS_PER_COMPETENCY = 1;
+
+async function loadOrGenerateScript(
+  supabase: any,
+  jobData: Job,
+): Promise<{ script: InterviewScriptItem[] | null; error?: string }> {
+  const existing = (jobData as any)?.interview_blueprints_json as
+    | InterviewScriptItem[]
+    | null;
+
+  if (Array.isArray(existing) && existing.length >= 3) {
+    return { script: existing };
+  }
+
+  const gen = await generateInterviewScript({
+    roleTitle: jobData?.title || "",
+    jobDescription: jobData?.description || "",
+    jobRequirements: jobData?.requirements || "",
+  });
+
+  if (!gen.success || !gen.script) {
+    return {
+      script: null,
+      error:
+        "Hermes belum dapat menyusun kerangka wawancara untuk lowongan ini. Silakan coba beberapa saat lagi.",
+    };
+  }
+
+  await supabase
+    .from("jobs")
+    .update({ interview_blueprints_json: gen.script })
+    .eq("id", jobData.id);
+
+  return { script: gen.script };
+}
+
+function jobTextOf(job: Job | null): string {
+  return `${job?.title || ""} ${job?.description || ""} ${job?.requirements || ""}`;
+}
 
 // 1. START INTERVIEW ACTION
 export async function startInterviewAction(applicationId: string) {
@@ -66,13 +81,15 @@ export async function startInterviewAction(applicationId: string) {
     return { success: false, error: "Anda tidak memiliki akses ke sesi wawancara ini." };
   }
 
-  // Validate CV Screening Score: Non-passed candidates are NOT allowed to take the interview
-  const minScore = Number((app as any).job?.min_score_threshold || 0);
-  const cvScore = Number(app.cv_score || 0);
-  if (cvScore < minScore && profile.role !== "admin") {
+  const outcome = (app.cv_analysis_json as any)?.screening_outcome;
+
+  if (profile.role !== "admin" && outcome !== "passed") {
     return {
       success: false,
-      error: "Nilai screening CV belum memenuhi batas kualifikasi minimum lowongan ini untuk mengikuti sesi wawancara AI.",
+      error:
+        outcome === "rejected"
+          ? "Lamaran Anda belum memenuhi kualifikasi minimum untuk posisi ini."
+          : "Lamaran Anda masih dalam proses tinjauan recruiter.",
     };
   }
 
@@ -116,52 +133,39 @@ export async function startInterviewAction(applicationId: string) {
   }
 
   const jobData = (app as any).job as Job;
-  const candidateName = (app as any).candidate?.full_name || profile.full_name || "Kandidat";
-  const firstBlueprint = INTERVIEW_COMPETENCY_BLUEPRINTS[0];
 
-  const fullJobContext = `Posisi: ${jobData?.title || "Lowongan"}
-Kandidat: ${candidateName}
-Deskripsi Pekerjaan:
-${jobData?.description || "Tanggung jawab teknis & operasional posisi ini."}
+  const { script, error: scriptErr } = await loadOrGenerateScript(supabase, jobData);
+  if (!script) {
+    return { success: false, error: scriptErr };
+  }
 
-Kualifikasi & Persyaratan:
-${jobData?.requirements || "Standar keahlian dan pengalaman kerja."}`;
-
-  // Generate first core question with full context
-  const aiQuestion = (await runAIInterviewGenerator({
-    mode: "core",
-    role_title: jobData?.title || "Posisi Lamaran",
-    job_description: fullJobContext,
-    competency_tag: firstBlueprint.tag,
-    required_topics: firstBlueprint.required_topics,
-    avoided_topics: firstBlueprint.avoided_topics,
-    previous_questions: [],
-  })) as AIInterviewQuestionCore;
-
+  const firstItem = script[0];
   const firstMessage: InterviewMessage = {
     id: `msg_ai_${Date.now()}`,
     sender: "ai",
-    text: aiQuestion?.question_text || `Ceritakan pengalaman nyata Anda dalam menyelesaikan masalah teknis paling menantang pada posisi ${jobData?.title}.`,
+    text: firstItem.question_text,
     timestamp: new Date().toISOString(),
-    competency_tag: firstBlueprint.tag,
+    competency_tag: firstItem.tag,
     question_type: "core",
-    reason: aiQuestion?.reason,
+    question_source: "script",
+    reason: firstItem.scenario_context,
   };
 
   const initialTranscript: InterviewSessionTranscript = {
-    session_id: `session_${Date.now()}`,
+    session_id: `sess_${applicationId}_${Date.now()}`,
     started_at: new Date().toISOString(),
     duration_seconds: 0,
-    competencies_tested: [firstBlueprint.tag],
+    competencies_tested: script.map((s) => s.tag),
+    blueprints: script,
     messages: [firstMessage],
   };
 
   const { error: updateError } = await supabase
     .from("applications")
     .update({
-      interview_started_at: new Date().toISOString(),
-      interview_transcript_json: initialTranscript,
       status: "interview_in_progress",
+      interview_started_at: initialTranscript.started_at,
+      interview_transcript_json: initialTranscript,
     })
     .eq("id", applicationId);
 
@@ -182,7 +186,7 @@ ${jobData?.requirements || "Standar keahlian dan pengalaman kerja."}`;
 // 2. SUBMIT CANDIDATE ANSWER & GET NEXT QUESTION / COMPLETE
 export async function submitAnswerAndGetNextAction(
   applicationId: string,
-  candidateAnswerText: string,
+  rawAnswerText: string,
   elapsedDurationSeconds: number
 ) {
   const { profile } = await requireProfile();
@@ -220,155 +224,139 @@ export async function submitAnswerAndGetNextAction(
     };
   }
 
-  const jobData = (app as any).job as Job;
-  const candidateName = (app as any).candidate?.full_name || profile.full_name || "Kandidat";
-
-  const fullJobContext = `Posisi: ${jobData?.title || "Lowongan"}
-Kandidat: ${candidateName}
-Deskripsi Pekerjaan:
-${jobData?.description || "Tanggung jawab teknis & operasional posisi ini."}
-
-Kualifikasi & Persyaratan:
-${jobData?.requirements || "Standar keahlian dan pengalaman kerja."}`;
-
-  const currentTranscript = (app.interview_transcript_json as InterviewSessionTranscript) || {
-    session_id: `session_${Date.now()}`,
+  const transcript = (app.interview_transcript_json as InterviewSessionTranscript) || {
+    session_id: `sess_${applicationId}_${Date.now()}`,
     started_at: new Date().toISOString(),
     duration_seconds: elapsedDurationSeconds,
     competencies_tested: [],
     messages: [],
   };
+  const jobData = (app as any).job as Job;
+  const jobText = jobTextOf(jobData);
 
-  const messages = currentTranscript.messages || [];
-  const lastAiMessage = [...messages].reverse().find((m) => m.sender === "ai");
-  const currentCompetencyTag = lastAiMessage?.competency_tag || INTERVIEW_COMPETENCY_BLUEPRINTS[0].tag;
-  const currentBlueprint =
-    INTERVIEW_COMPETENCY_BLUEPRINTS.find((b) => b.tag === currentCompetencyTag) ||
-    INTERVIEW_COMPETENCY_BLUEPRINTS[0];
+  const script: InterviewScriptItem[] =
+    transcript.blueprints ||
+    ((jobData as any)?.interview_blueprints_json as InterviewScriptItem[]) ||
+    [];
 
-  // Clean and normalize speech-to-text transcript
-  const normalizedAnswer = normalizeSpeechTranscript(candidateAnswerText);
+  if (script.length === 0) {
+    return { success: false, error: "Kerangka wawancara tidak ditemukan pada sesi ini." };
+  }
 
-  // Append candidate message
-  const candidateMessage: InterviewMessage = {
+  const messages = [...(transcript.messages || [])];
+
+  const candidateAnswerText = normalizeSpeechTranscript(rawAnswerText, jobText);
+  messages.push({
     id: `msg_cand_${Date.now()}`,
     sender: "candidate",
-    text: normalizedAnswer,
+    text: candidateAnswerText,
     timestamp: new Date().toISOString(),
-    competency_tag: currentCompetencyTag,
-  };
-  messages.push(candidateMessage);
+  });
 
-  // Count how many follow-ups have been asked for this competency
-  const followUpsForThisComp = messages.filter(
-    (m) => m.sender === "ai" && m.competency_tag === currentCompetencyTag && m.question_type === "follow_up"
+  // Posisi kompetensi saat ini = jumlah core question yang sudah diajukan - 1
+  const coreAsked = messages.filter(
+    (m) => m.sender === "ai" && m.question_type === "core"
+  ).length;
+  const currentIndex = Math.max(0, coreAsked - 1);
+  const currentItem = script[currentIndex];
+
+  const followUpsForCurrent = messages.filter(
+    (m) =>
+      m.sender === "ai" &&
+      m.question_type === "follow_up" &&
+      m.competency_tag === currentItem.tag
   ).length;
 
   const previousAiQuestions = messages
     .filter((m) => m.sender === "ai")
     .map((m) => m.text);
 
+  const lastAiQuestion =
+    [...messages].reverse().find((m) => m.sender === "ai")?.text || "";
+
   let nextAiMessage: InterviewMessage | null = null;
   let isInterviewDone = false;
 
-  // If we haven't reached max follow-ups for this competency, evaluate follow-up
-  if (followUpsForThisComp < currentBlueprint.max_follow_ups) {
-    const followUpRes = (await runAIInterviewGenerator({
-      mode: "follow_up",
-      role_title: jobData?.title || "Posisi",
-      job_description: fullJobContext,
-      competency_tag: currentCompetencyTag,
-      required_topics: currentBlueprint.required_topics,
-      avoided_topics: currentBlueprint.avoided_topics,
-      previous_questions: previousAiQuestions,
-      last_answer_transcript: candidateAnswerText,
-      max_follow_ups_for_this_competency: currentBlueprint.max_follow_ups,
-      already_asked_follow_ups_count: followUpsForThisComp,
-    })) as AIInterviewQuestionFollowUp;
+  if (followUpsForCurrent < FOLLOW_UPS_PER_COMPETENCY) {
+    // Tahap follow-up untuk kompetensi ini
+    const fu = await generateFollowUp({
+      roleTitle: jobData?.title || "Posisi",
+      jobText,
+      competencyTitle: currentItem.title,
+      requiredTopics: currentItem.required_topics,
+      lastQuestion: lastAiQuestion,
+      lastAnswer: candidateAnswerText,
+      previousQuestions: previousAiQuestions,
+      preparedProbe: currentItem.prepared_probe,
+    });
 
-    if (followUpRes && followUpRes.need_follow_up && followUpRes.follow_up_question) {
-      nextAiMessage = {
-        id: `msg_ai_${Date.now()}`,
-        sender: "ai",
-        text: followUpRes.follow_up_question,
-        timestamp: new Date().toISOString(),
-        competency_tag: currentCompetencyTag,
-        question_type: "follow_up",
-        gap_targeted: followUpRes.gap_targeted,
-        reason: followUpRes.reason,
-      };
-      messages.push(nextAiMessage);
-    }
+    nextAiMessage = {
+      id: `msg_ai_${Date.now()}`,
+      sender: "ai",
+      text: fu.question,
+      timestamp: new Date().toISOString(),
+      competency_tag: currentItem.tag,
+      question_type: "follow_up",
+      question_source: fu.source,
+      quoted_span: fu.quotedSpan,
+      gap_targeted: fu.gapType,
+      reason: fu.reason,
+    };
+  } else if (currentIndex + 1 < script.length) {
+    // Pindah ke kompetensi berikutnya
+    const nextItem = script[currentIndex + 1];
+    nextAiMessage = {
+      id: `msg_ai_${Date.now()}`,
+      sender: "ai",
+      text: nextItem.question_text,
+      timestamp: new Date().toISOString(),
+      competency_tag: nextItem.tag,
+      question_type: "core",
+      question_source: "script",
+      reason: nextItem.scenario_context,
+    };
+  } else {
+    isInterviewDone = true;
   }
 
-  // If no follow-up needed (or max follow-up reached), transition to next competency
-  if (!nextAiMessage) {
-    const currentCompIndex = INTERVIEW_COMPETENCY_BLUEPRINTS.findIndex(
-      (b) => b.tag === currentCompetencyTag
-    );
-    const nextBlueprint = INTERVIEW_COMPETENCY_BLUEPRINTS[currentCompIndex + 1];
+  if (nextAiMessage) messages.push(nextAiMessage);
 
-    if (nextBlueprint) {
-      // Generate Next Core Question
-      const nextCoreQuestion = (await runAIInterviewGenerator({
-        mode: "core",
-        role_title: jobData?.title || "Posisi",
-        job_description: fullJobContext,
-        competency_tag: nextBlueprint.tag,
-        required_topics: nextBlueprint.required_topics,
-        avoided_topics: nextBlueprint.avoided_topics,
-        previous_questions: previousAiQuestions,
-      })) as AIInterviewQuestionCore;
-
-      nextAiMessage = {
-        id: `msg_ai_${Date.now()}`,
-        sender: "ai",
-        text: nextCoreQuestion?.question_text || `Bagaimana pendekatan Anda terkait ${nextBlueprint.title}?`,
-        timestamp: new Date().toISOString(),
-        competency_tag: nextBlueprint.tag,
-        question_type: "core",
-        reason: nextCoreQuestion?.reason,
-      };
-      messages.push(nextAiMessage);
-
-      if (!currentTranscript.competencies_tested.includes(nextBlueprint.tag)) {
-        currentTranscript.competencies_tested.push(nextBlueprint.tag);
-      }
-    } else {
-      // ALL COMPETENCIES ARE COMPLETED!
-      isInterviewDone = true;
-    }
-  }
-
-  let finalEvaluation = currentTranscript.overall_evaluation;
+  let evaluation: any = transcript.overall_evaluation;
 
   if (isInterviewDone) {
-    // Generate overall evaluation
-    finalEvaluation = await evaluateInterviewSession({
-      candidateName: (app as any).candidate?.full_name || profile.full_name || "Kandidat",
-      roleTitle: jobData?.title || "Posisi Lowongan",
+    // Evaluate full interview transcript via Hermes
+    evaluation = await evaluateInterviewSessionHermes({
+      candidateName: (app as any).candidate?.full_name || app.cv_parsed_name || profile.full_name || "Kandidat",
+      roleTitle: jobData?.title || "",
+      jobDescription: jobData?.description || "",
+      jobRequirements: jobData?.requirements || "",
+      blueprints: script,
       durationSeconds: elapsedDurationSeconds,
       messages,
-      competenciesTested: currentTranscript.competencies_tested,
     });
   }
 
-  const updatedTranscript: InterviewSessionTranscript = {
-    ...currentTranscript,
+  const finalTranscript: InterviewSessionTranscript = {
+    ...transcript,
     duration_seconds: elapsedDurationSeconds,
     completed_at: isInterviewDone ? new Date().toISOString() : undefined,
     messages,
-    overall_evaluation: finalEvaluation,
+    blueprints: script,
+    ...(evaluation
+      ? { overall_evaluation: evaluation, evaluation_status: "completed" }
+      : isInterviewDone
+      ? { evaluation_status: "pending" }
+      : {}),
   };
 
   const updatePayload: any = {
-    interview_transcript_json: updatedTranscript,
+    interview_transcript_json: finalTranscript,
     interview_duration_seconds: elapsedDurationSeconds,
   };
 
   if (isInterviewDone) {
     updatePayload.status = "interview_completed";
-    updatePayload.interview_completed_at = new Date().toISOString();
+    updatePayload.interview_completed_at = finalTranscript.completed_at;
   }
 
   await supabase
@@ -383,8 +371,8 @@ ${jobData?.requirements || "Standar keahlian dan pengalaman kerja."}`;
   return {
     success: true,
     isInterviewDone,
-    transcript: updatedTranscript,
-    evaluation: finalEvaluation,
+    transcript: finalTranscript,
+    evaluation: evaluation || undefined,
     durationSeconds: elapsedDurationSeconds,
   };
 }
@@ -417,19 +405,31 @@ export async function reEvaluateInterviewAction(applicationId: string) {
   }
 
   const jobData = (app as any).job as Job;
-  const candidateName = (app as any).candidate?.full_name || "Kandidat";
+  const candidateName = (app as any).candidate?.full_name || app.cv_parsed_name || "Kandidat";
 
-  const newEvaluation = await evaluateInterviewSession({
+  const script: InterviewScriptItem[] =
+    transcript.blueprints ||
+    ((jobData as any)?.interview_blueprints_json as InterviewScriptItem[]) ||
+    [];
+
+  const durationSec = app.interview_duration_seconds || transcript.duration_seconds || 120;
+
+  const newEvaluation = await evaluateInterviewSessionHermes({
     candidateName,
     roleTitle: jobData?.title || "Posisi",
-    durationSeconds: app.interview_duration_seconds || transcript.duration_seconds || 120,
+    jobDescription: jobData?.description || "",
+    jobRequirements: jobData?.requirements || "",
+    blueprints: script,
+    durationSeconds: durationSec,
     messages: transcript.messages,
-    competenciesTested: transcript.competencies_tested || ["technical_problem_solving"],
   });
 
   const updatedTranscript: InterviewSessionTranscript = {
     ...transcript,
-    overall_evaluation: newEvaluation,
+    blueprints: script,
+    ...(newEvaluation
+      ? { overall_evaluation: newEvaluation, evaluation_status: "completed" }
+      : { evaluation_status: "pending" }),
   };
 
   const { error: updateError } = await supabase
@@ -447,7 +447,8 @@ export async function reEvaluateInterviewAction(applicationId: string) {
   revalidatePath(`/applications/${applicationId}/interview`);
 
   return {
-    success: true,
+    success: !!newEvaluation,
     evaluation: newEvaluation,
+    error: newEvaluation ? undefined : "Hermes belum dapat mengevaluasi transkrip ini. Silakan coba sesaat lagi.",
   };
 }
