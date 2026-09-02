@@ -6,6 +6,11 @@ import { requireProfile, requireAdmin } from "@/lib/supabase/auth";
 import { ApplicationStatus } from "@/types/database";
 import { runHermesCvScreening } from "@/lib/hermes-screener";
 import { extractTextFromCvFile } from "@/lib/cv-parser";
+import {
+  classifyScreening,
+  SCREENING_BANDS,
+  ScreeningOutcome,
+} from "@/lib/screening-bands";
 
 export interface ApplyJobResult {
   success: boolean;
@@ -14,6 +19,8 @@ export interface ApplyJobResult {
   minScoreThreshold?: number;
   analysisText?: string;
   status?: ApplicationStatus;
+  outcome?: ScreeningOutcome;
+  label?: string;
   error?: string;
 }
 
@@ -56,7 +63,6 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
 
   // 2. Upload file to Supabase Storage
   if (cvFile && cvFile.size > 0 && typeof cvFile.name === "string") {
-    const fileExt = cvFile.name.split(".").pop() || "pdf";
     const sanitizedName = cvFile.name.replace(/[^a-zA-Z0-9.-]/g, "_");
     const filePath = `${profile.id}/${Date.now()}_${sanitizedName}`;
 
@@ -86,10 +92,10 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
     .eq("id", jobId)
     .single();
 
-  let initialStatus: ApplicationStatus = "screened";
   let initialScore: number | null = null;
   let initialAnalysisJson: Record<string, unknown> | null = null;
   let analysisOutputText = "";
+  let aiSucceeded = false;
 
   // 4. Execute Hermes AI Screening Immediately with extracted CV Text
   if (jobData) {
@@ -103,15 +109,31 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
       });
 
       if (aiResult.success) {
+        aiSucceeded = true;
         initialScore = aiResult.score;
         initialAnalysisJson = aiResult.analysisJson;
         analysisOutputText = aiResult.analysisText;
-        initialStatus = "screened";
       }
     } catch (aiErr) {
       console.error("Hermes screening execution error:", aiErr);
     }
   }
+
+  const decision = classifyScreening({
+    score: initialScore,
+    aiSucceeded,
+    cvTextLength: cvTextContent.trim().length,
+    jobMinScoreThreshold: jobData?.min_score_threshold,
+  });
+
+  const analysisJson = {
+    ...(initialAnalysisJson || {}),
+    screening_outcome: decision.outcome,
+    screening_label: decision.label,
+    effective_pass_min: decision.effectivePassMin,
+    bands: SCREENING_BANDS,
+    cv_text_length: cvTextContent.trim().length,
+  };
 
   // 5. Insert Application with Hermes Output directly into Database
   const { data: insertedApp, error: insertErr } = await supabase
@@ -121,9 +143,9 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
       job_id: jobId,
       cv_storage_path: cvStoragePath,
       cv_parsed_name: cvParsedName,
-      status: initialStatus,
+      status: decision.status,
       cv_score: initialScore,
-      cv_analysis_json: initialAnalysisJson,
+      cv_analysis_json: analysisJson,
     })
     .select("id")
     .single();
@@ -141,9 +163,11 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
     success: true,
     applicationId: insertedApp?.id,
     score: initialScore,
-    minScoreThreshold: jobData?.min_score_threshold ?? 70,
+    minScoreThreshold: decision.effectivePassMin,
     analysisText: analysisOutputText,
-    status: initialStatus,
+    status: decision.status,
+    outcome: decision.outcome,
+    label: decision.label,
   };
 }
 
@@ -196,15 +220,28 @@ export async function triggerLangflowScreeningAction(applicationId: string) {
     return { error: aiResult.error || "Gagal menghubungi Hermes / Nara Router API." };
   }
 
-  const score = aiResult.score ?? 75;
-  const newStatus: ApplicationStatus = "screened";
+  const decision = classifyScreening({
+    score: aiResult.score ?? null,
+    aiSucceeded: aiResult.success,
+    cvTextLength: cvTextContent.trim().length,
+    jobMinScoreThreshold: app.job?.min_score_threshold,
+  });
+
+  const analysisJson = {
+    ...(aiResult.analysisJson || (app.cv_analysis_json as any) || {}),
+    screening_outcome: decision.outcome,
+    screening_label: decision.label,
+    effective_pass_min: decision.effectivePassMin,
+    bands: SCREENING_BANDS,
+    cv_text_length: cvTextContent.trim().length,
+  };
 
   const { error: updateError } = await supabase
     .from("applications")
     .update({
-      cv_score: score,
-      cv_analysis_json: aiResult.analysisJson,
-      status: newStatus,
+      cv_score: aiResult.score ?? null,
+      cv_analysis_json: analysisJson,
+      status: decision.status,
     })
     .eq("id", applicationId);
 
@@ -218,8 +255,11 @@ export async function triggerLangflowScreeningAction(applicationId: string) {
 
   return {
     success: true,
-    score,
+    score: aiResult.score,
     analysisText: aiResult.analysisText,
+    status: decision.status,
+    outcome: decision.outcome,
+    label: decision.label,
   };
 }
 

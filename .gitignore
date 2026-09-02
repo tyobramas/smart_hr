@@ -38,6 +38,6 @@ env.local
 # Vercel
 .vercel
 
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
+# Supabase backup
+supabase/backup/
+

@@ -50,6 +50,15 @@ export async function getOrGenerateTriFactorSynthesisAction(applicationId: strin
     interviewTranscript: (app.interview_transcript_json as any) || {},
   });
 
+  if (!synthesis) {
+    return {
+      success: false,
+      synthesis: null,
+      error: "Hermes Agent belum dapat menyusun sintesis eksekutif saat ini. Silakan coba sesaat lagi.",
+      application: app,
+    };
+  }
+
   // Save to personality_result_json or application metadata
   const currentPersonalityJson = (app.personality_result_json as any) || {};
   currentPersonalityJson.tri_factor_synthesis = synthesis;

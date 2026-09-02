@@ -580,6 +580,22 @@ export function AdminDossierClient({ app }: AdminDossierClientProps) {
                   Transkrip dan skor evaluasi AI akan otomatis terisi secara real-time saat kandidat menyelesaikan sesi wawancara.
                 </p>
               </div>
+            ) : !interviewEval ? (
+              <div className="p-10 bg-amber-950/30 rounded-3xl border border-amber-500/30 text-center space-y-3">
+                <Clock className="w-10 h-10 text-amber-400 mx-auto animate-pulse" />
+                <h4 className="text-base font-black text-white">Menunggu Evaluasi Hermes Assessor</h4>
+                <p className="text-xs text-slate-300 max-w-md mx-auto">
+                  Sesi wawancara telah selesai dan transkrip tersimpan. Klik tombol di bawah untuk meminta Hermes mengevaluasi transkrip secara objektif.
+                </p>
+                <button
+                  onClick={handleReevaluateInterview}
+                  disabled={isReanalyzingInterview}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{isReanalyzingInterview ? "Mengevaluasi..." : "Evaluasi Sekarang dengan Hermes"}</span>
+                </button>
+              </div>
             ) : (
               <div className="space-y-6">
                 {/* Scores Summary Bar */}
