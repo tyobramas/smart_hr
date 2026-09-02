@@ -29,25 +29,43 @@ function execSshHermes(
   vpsHost: string,
   vpsPort: string,
   prompt: string,
-  timeoutMs = 60000
+  timeoutMs = 90000
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      "ssh",
-      [
-        "-p",
-        vpsPort,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "ConnectTimeout=8",
-        `${vpsUser}@${vpsHost}`,
-        'hermes -z "$(cat)"',
-      ],
-      {
-        timeout: timeoutMs,
-      }
-    );
+    const effectiveTimeout = Math.max(timeoutMs, 90000);
+    const homeDir = process.env.HOME || "/Users/bramastyokusumo";
+    const keyPath = `${homeDir}/.ssh/id_ed25519`;
+
+    const sshArgs = [
+      "-p",
+      vpsPort,
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ServerAliveInterval=10",
+      "-o",
+      "ServerAliveCountMax=6",
+      "-o",
+      "TCPKeepAlive=yes",
+    ];
+
+    if (fs.existsSync(keyPath)) {
+      sshArgs.push("-i", keyPath);
+    }
+
+    sshArgs.push(`${vpsUser}@${vpsHost}`, 'hermes -z "$(cat)"');
+
+    const child = spawn("ssh", sshArgs, {
+      timeout: effectiveTimeout,
+      env: {
+        ...process.env,
+        HOME: homeDir,
+      },
+    });
 
     let stdout = "";
     let stderr = "";
@@ -62,6 +80,11 @@ function execSshHermes(
 
     child.on("error", (err) => {
       reject(err);
+    });
+
+    child.stdin.on("error", (err) => {
+      // Ignore EPIPE if child process exits early
+      console.warn("[Hermes SSH Stdin] Pipe warning:", err.message);
     });
 
     child.on("close", (code) => {

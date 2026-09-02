@@ -162,7 +162,7 @@ Buatkan sintesis eksekutif Tri-Factor menyeluruh dalam format JSON murni.`;
       userPrompt: userContext,
       temperature: 0.2,
       maxTokens: 2000,
-      timeoutMs: 45000,
+      timeoutMs: 90000,
     });
 
     if (!res.success || !res.content) continue;

@@ -140,7 +140,7 @@ ${additionalContext ? `Catatan Tambahan: ${additionalContext}` : ""}`.trim();
           : `${systemPrompt}\n\nPERINGATAN: Output sebelumnya tidak valid. Pastikan mengembalikan JSON valid murni dengan field match_fit_score (0-100) dan alasan_keputusan.`,
       userPrompt,
       temperature: 0.2,
-      timeoutMs: 45000,
+      timeoutMs: 90000,
     });
 
     if (!response.success || !response.content) {
