@@ -6,9 +6,11 @@ const execFileAsync = promisify(execFile);
 
 export interface HermesCallParams {
   systemPrompt?: string;
-  userPrompt: string;
+  userPrompt?: string;
+  userMessage?: string;
   temperature?: number;
   maxTokens?: number;
+  taskLabel?: string;
   modelOverride?: string;
   timeoutMs?: number;
 }
@@ -173,6 +175,7 @@ async function callHermesApi(
   params: HermesCallParams,
   timeoutMs = 45000
 ): Promise<{ content: string; model: string }> {
+  const effectiveTimeout = params.timeoutMs || timeoutMs || 45000;
   const baseUrl =
     process.env.HERMES_BASE_URL ||
     process.env.NARA_ROUTER_BASE_URL ||
@@ -181,7 +184,7 @@ async function callHermesApi(
   const apiKey =
     process.env.HERMES_API_KEY ||
     process.env.NARA_ROUTER_API_KEY ||
-    "";
+    "sk-nry-kZaU_a5GHRP3DdqZBwYoeOXRm-hExbYYNjyBkyg8-y8";
 
   const primaryModel =
     params.modelOverride ||
@@ -201,19 +204,20 @@ async function callHermesApi(
     ])
   );
 
+  const userText = params.userPrompt || params.userMessage || "";
   const messages: Array<{ role: "system" | "user"; content: string }> = [];
   if (params.systemPrompt) {
     messages.push({ role: "system", content: params.systemPrompt });
   }
-  messages.push({ role: "user", content: params.userPrompt });
+  messages.push({ role: "user", content: userText });
 
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + effectiveTimeout;
   let lastError: any = null;
 
   for (const model of candidateModels) {
     const remaining = deadline - Date.now();
     if (remaining < 3000) {
-      console.warn(`[Hermes API] Deadline total terlampaui, berhenti mencoba model lain.`);
+      console.warn(`[Hermes API] Deadline total (${effectiveTimeout}ms) terlampaui, berhenti mencoba model lain.`);
       break;
     }
 
@@ -225,7 +229,7 @@ async function callHermesApi(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${process.env.HERMES_API_KEY || "sk-nry-kZaU_a5GHRP3DdqZBwYoeOXRm-hExbYYNjyBkyg8-y8"}`,
           "HTTP-Referer": "https://smart-hr.local",
           "X-Title": "Smart HR Hermes Screener",
         },
@@ -233,7 +237,7 @@ async function callHermesApi(
           model,
           messages,
           temperature: params.temperature ?? 0.2,
-          max_tokens: params.maxTokens ?? 3000,
+          max_tokens: params.maxTokens ?? 1000,
         }),
         signal: controller.signal,
       });
@@ -252,8 +256,13 @@ async function callHermesApi(
         return { content: rawContent, model };
       }
     } catch (err: any) {
-      lastError = err;
-      console.warn(`[Hermes API] Network error for model ${model}:`, err.message);
+      const isAbort = err?.name === "AbortError" || err?.message?.includes("aborted");
+      if (isAbort) {
+        lastError = new Error(`Timeout terlampaui setelah ${effectiveTimeout}ms.`);
+      } else {
+        lastError = err;
+      }
+      console.warn(`[Hermes API] Network error for model ${model}:`, lastError.message);
     }
   }
 
@@ -274,9 +283,10 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
       const vpsHost = process.env.HERMES_VPS_HOST || "103.30.146.87";
       console.log(`\n\x1b[1m\x1b[35m[HERMES ROUTE: CLI / VPS]\x1b[0m 🖥️  Mengeksekusi melalui \x1b[32mHermes Agent Framework CLI (VPS: ${vpsHost})\x1b[0m...`);
       
+      const userText = params.userPrompt || params.userMessage || "";
       const combinedPrompt = params.systemPrompt
-        ? `${params.systemPrompt}\n\n${params.userPrompt}`
-        : params.userPrompt;
+        ? `${params.systemPrompt}\n\n${userText}`
+        : userText;
 
       const output = await callHermesCli(combinedPrompt, undefined, params.timeoutMs ?? 60000);
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);

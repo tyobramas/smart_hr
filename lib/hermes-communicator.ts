@@ -5,10 +5,15 @@ export interface EmailContent {
   subject: string;
   body_html: string;
   body_text: string;
-  internal_tone_notes: string;
+  internal_tone_notes?: string;
   modelUsed?: string;
   durationMs: number;
+  hermes_model: string;
+  hermes_duration_ms: number;
+  hermes_error?: string | null;
 }
+
+export type GeneratedEmailResult = EmailContent;
 
 export interface EmailContext {
   candidateName: string;
@@ -19,6 +24,24 @@ export interface EmailContext {
   applicationDate?: string;
   interviewDeadline?: string;
   appBaseUrl?: string;
+  actionUrl?: string;
+}
+
+function resolveDefaultActionUrl(eventType: CommunicationEventType, applicationId: string, baseUrl: string): string {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  switch (eventType) {
+    case "screening_passed":
+    case "personality_reminder":
+      return `${cleanBase}/applications/${applicationId}/personality-test`;
+
+    case "interview_invitation":
+    case "interview_reminder_48h":
+    case "interview_reminder_24h":
+      return `${cleanBase}/applications/${applicationId}/interview`;
+
+    default:
+      return `${cleanBase}/applications/${applicationId}`;
+  }
 }
 
 const SYSTEM_PROMPT = `Kamu adalah Recruitment Communication Specialist profesional untuk platform SmartHR.
@@ -34,7 +57,8 @@ ATURAN WAJIB & KETAT:
 7. Untuk email penolakan: sampaikan dengan empati yang tulus, jelas, berterima kasih atas waktu mereka, dan doakan kesuksesan karier mereka.
 8. Untuk email undangan/lolos: sampaikan dengan antusiasme yang membangun, berikan tenggat waktu dan tautan yang jelas.
 9. Untuk pengingat (reminder): sampaikan dengan sopan namun jelas mengenai sisa batas waktu.
-10. Format body_html harus berupa dokumen HTML bersih dengan inline CSS yang ramah email client (menggunakan container putih, font sans-serif, border halus, tombol tautan yang jelas).
+10. JANGAN PERNAH memotong, mengubah, atau mengarang path URL. Gunakan ACTION_URL yang diberikan secara utuh dan persis pada link atau tombol Call-to-Action (CTA).
+11. Format body_html harus berupa dokumen HTML bersih dengan inline CSS yang ramah email client (menggunakan container putih, font sans-serif, border halus, tombol tautan yang jelas).
 
 FORMAT OUTPUT WAJIB:
 Kembalikan HANYA dokumen JSON valid tanpa pembuka teks lain dengan format persis:
@@ -46,9 +70,12 @@ Kembalikan HANYA dokumen JSON valid tanpa pembuka teks lain dengan format persis
 }`;
 
 function buildUserMessage(eventType: CommunicationEventType, ctx: EmailContext): string {
-  const baseUrl = ctx.appBaseUrl || process.env.APP_BASE_URL || "http://localhost:3000";
-  const appLink = `${baseUrl}/applications/${ctx.applicationId}`;
+  const baseUrl = (ctx.appBaseUrl || process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
+  const actionUrl = ctx.actionUrl || resolveDefaultActionUrl(eventType, ctx.applicationId, baseUrl);
   const locationText = ctx.jobLocation ? ` di ${ctx.jobLocation}` : "";
+
+  const linkInstruction = `ACTION_URL: ${actionUrl}
+Instruksi Khusus Tautan: Gunakan ACTION_URL ini secara persis pada tombol Call-to-Action (CTA) atau hyperlink di badan email: ${actionUrl}`;
 
   switch (eventType) {
     case "application_received":
@@ -56,17 +83,17 @@ function buildUserMessage(eventType: CommunicationEventType, ctx: EmailContext):
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
 TANGGAL: ${ctx.applicationDate || "Hari ini"}
-TAUTAN APLIKASI: ${appLink}
+${linkInstruction}
 
-Instruksi: Tuliskan konfirmasi bahwa berkas lamaran telah berhasil diterima oleh sistem SmartHR. Sampaikan bahwa CV mereka sedang diproses dan ditinjau secara saksama.`;
+Instruksi: Tuliskan konfirmasi bahwa berkas lamaran telah berhasil diterima oleh sistem SmartHR. Sampaikan bahwa CV mereka sedang diproses dan ditinjau secara saksama. Berikan tombol/tautan CTA menggunakan ACTION_URL untuk melihat status lamaran.`;
 
     case "screening_passed":
       return `EVENT: screening_passed (Lolos Tahap Screening Berkas)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
-TAUTAN TES: ${appLink}
+${linkInstruction}
 
-Instruksi: Sampaikan kabar baik bahwa berkas lamaran kandidat berhasil memenuhi kualifikasi awal. Ajak kandidat untuk melanjutkan ke tahap berikutnya, yaitu asesmen kepribadian (personality assessment) melalui tautan aplikasi.`;
+Instruksi: Sampaikan kabar baik bahwa berkas lamaran kandidat berhasil memenuhi kualifikasi awal. Ajak kandidat untuk melanjutkan ke tahap berikutnya, yaitu asesmen kepribadian (personality assessment). WAJIB sertakan tombol Call-to-Action "Mulai Asesmen Kepribadian" dengan tautan persis ke ACTION_URL: ${actionUrl}.`;
 
     case "screening_rejected":
       return `EVENT: screening_rejected (Tidak Lolos Screening Berkas)
@@ -79,60 +106,60 @@ Instruksi: Sampaikan dengan empati bahwa untuk saat ini kami belum dapat melanju
       return `EVENT: screening_review (Lamaran Sedang Ditinjau Manual)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
-TAUTAN STATUS: ${appLink}
+${linkInstruction}
 
-Instruksi: Sampaikan bahwa profil mereka saat ini sedang dalam peninjauan mendalam oleh tim rekruter kami dan kami akan segera mengabari kembali perkembangan selanjutnya.`;
+Instruksi: Sampaikan bahwa profil mereka saat ini sedang dalam peninjauan mendalam oleh tim rekruter kami dan kami akan segera mengabari kembali perkembangan selanjutnya. Berikan tombol/tautan CTA menggunakan ACTION_URL.`;
 
     case "personality_reminder":
       return `EVENT: personality_reminder (Pengingat Asesmen Kepribadian)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
-TAUTAN ASESMEN: ${appLink}
+${linkInstruction}
 
-Instruksi: Ingatkan kandidat secara ramah bahwa mereka belum menyelesaikan asesmen kepribadian untuk posisi ${ctx.jobTitle}. Tekankan pentingnya tahap ini agar proses rekrutmen dapat berlanjut.`;
+Instruksi: Ingatkan kandidat secara ramah bahwa mereka belum menyelesaikan asesmen kepribadian untuk posisi ${ctx.jobTitle}. Tekankan pentingnya tahap ini agar proses rekrutmen dapat berlanjut. WAJIB sertakan tombol Call-to-Action "Lanjutkan Asesmen Kepribadian" dengan tautan persis ke ACTION_URL: ${actionUrl}.`;
 
     case "personality_completed":
       return `EVENT: personality_completed (Asesmen Kepribadian Berhasil Selesai)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
-TAUTAN: ${appLink}
+${linkInstruction}
 
-Instruksi: Ucapkan terima kasih dan selamat atas penyelesaian asesmen kepribadian. Sampaikan bahwa tim kami sedang meninjau hasilnya untuk penentuan langkah wawancara selanjutnya.`;
+Instruksi: Ucapkan terima kasih dan selamat atas penyelesaian asesmen kepribadian. Sampaikan bahwa tim kami sedang meninjau hasilnya untuk penentuan langkah wawancara selanjutnya. Berikan tombol/tautan CTA menggunakan ACTION_URL untuk melihat status lamaran.`;
 
     case "interview_invitation":
       return `EVENT: interview_invitation (Undangan Wawancara AI)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
 BATAS WAKTU: ${ctx.interviewDeadline || "Dalam 3 hari kerja"}
-TAUTAN WAWANCARA: ${appLink}/interview
+${linkInstruction}
 
-Instruksi: Sampaikan selamat karena kandidat diundang untuk sesi wawancara berbasis AI interaktif SmartHR. Jelaskan bahwa sesi dapat diakses fleksibel sebelum batas waktu dan berikan tips singkat (tempat tenang, koneksi stabil).`;
+Instruksi: Sampaikan selamat karena kandidat diundang untuk sesi wawancara berbasis AI interaktif SmartHR. Jelaskan bahwa sesi dapat diakses fleksibel sebelum batas waktu dan berikan tips singkat (tempat tenang, koneksi stabil). WAJIB sertakan tombol Call-to-Action "Mulai Wawancara AI" dengan tautan persis ke ACTION_URL: ${actionUrl}.`;
 
     case "interview_reminder_48h":
       return `EVENT: interview_reminder_48h (Pengingat Wawancara: 48 Jam Tersisa)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
 BATAS WAKTU: ${ctx.interviewDeadline || "48 jam ke depan"}
-TAUTAN: ${appLink}/interview
+${linkInstruction}
 
-Instruksi: Ingatkan bahwa waktu penyelesaian wawancara tersisa 48 jam lagi. Dorong kandidat untuk meluangkan waktu sesegera mungkin.`;
+Instruksi: Ingatkan bahwa waktu penyelesaian wawancara tersisa 48 jam lagi. Dorong kandidat untuk meluangkan waktu sesegera mungkin dengan tombol Call-to-Action yang mengarah persis ke ACTION_URL: ${actionUrl}.`;
 
     case "interview_reminder_24h":
       return `EVENT: interview_reminder_24h (Pengingat Penting: 24 Jam Terakhir)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
 BATAS WAKTU: ${ctx.interviewDeadline || "24 jam ke depan"}
-TAUTAN: ${appLink}/interview
+${linkInstruction}
 
-Instruksi: Berikan pengingat mendesak namun tetap santun bahwa hari ini adalah hari terakhir untuk menyelesaikan sesi wawancara AI sebelum sesi ditutup otomatis.`;
+Instruksi: Berikan pengingat mendesak namun tetap santun bahwa hari ini adalah hari terakhir untuk menyelesaikan sesi wawancara AI sebelum sesi ditutup otomatis. Gunakan tombol Call-to-Action yang mengarah persis ke ACTION_URL: ${actionUrl}.`;
 
     case "interview_completed":
       return `EVENT: interview_completed (Wawancara Selesai Dilakukan)
 KANDIDAT: ${ctx.candidateName} (Nama Depan: ${ctx.candidateFirstName})
 POSISI: ${ctx.jobTitle}${locationText}
-TAUTAN: ${appLink}
+${linkInstruction}
 
-Instruksi: Ucapkan apresiasi tinggi karena telah menyelesaikan seluruh rangkaian wawancara AI. Beritahu kandidat bahwa hasil wawancara sedang dianalisis secara komprehensif oleh tim rekruter.`;
+Instruksi: Ucapkan apresiasi tinggi karena telah menyelesaikan seluruh rangkaian wawancara AI. Beritahu kandidat bahwa hasil wawancara sedang dianalisis secara komprehensif oleh tim rekruter. Berikan tautan CTA ke ACTION_URL.`;
 
     case "interview_expired":
       return `EVENT: interview_expired (Batas Waktu Wawancara Telah Berakhir)
@@ -149,7 +176,7 @@ POSISI: ${ctx.jobTitle}${locationText}
 Instruksi: Sampaikan terima kasih yang sebesar-besarnya atas komitmen dan waktu yang diberikan selama proses asesmen dan wawancara. Beritahukan bahwa setelah pertimbangan matang, manajemen memutuskan untuk melanjutkan dengan kandidat lain. Doakan yang terbaik untuk perjalanan karier mereka.`;
 
     default:
-      return `EVENT: ${eventType} untuk kandidat ${ctx.candidateName} posisi ${ctx.jobTitle}.`;
+      return `EVENT: ${eventType} untuk kandidat ${ctx.candidateName} posisi ${ctx.jobTitle}. ${linkInstruction}`;
   }
 }
 
@@ -164,7 +191,6 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
   try {
     parsed = JSON.parse(jsonStr);
   } catch (initialErr) {
-    // Sanitize unescaped newlines/tabs inside JSON strings if LLM produced them
     try {
       const sanitized = jsonStr
         .replace(/(?<=:\s*"[^"]*)\n(?=[^"]*")/g, "\\n")
@@ -172,7 +198,6 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
         .replace(/(?<=:\s*"[^"]*)\t(?=[^"]*")/g, "\\t");
       parsed = JSON.parse(sanitized);
     } catch {
-      // Fallback: replace any unescaped control chars
       const sanitized2 = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, (c) => {
         if (c === "\n") return "\\n";
         if (c === "\r") return "\\r";
@@ -187,12 +212,10 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
     throw new Error("Hermes JSON is missing required fields (subject, body_html, body_text).");
   }
 
-  // Content safety validation
   if (parsed.subject.length > 100) {
     parsed.subject = parsed.subject.slice(0, 97) + "...";
   }
 
-  // Guard against unparsed raw JSON leaks in body
   if (parsed.body_html.includes('{"') || parsed.body_html.includes('"score"')) {
     throw new Error("Hermes generated body contains internal JSON / score structures.");
   }
@@ -209,8 +232,8 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
  * Fallback template generator in case AI connection is unreachable
  */
 function getFallbackContent(eventType: CommunicationEventType, ctx: EmailContext): { subject: string; body_html: string; body_text: string; internal_tone_notes: string } {
-  const baseUrl = ctx.appBaseUrl || process.env.APP_BASE_URL || "http://localhost:3000";
-  const appLink = `${baseUrl}/applications/${ctx.applicationId}`;
+  const baseUrl = (ctx.appBaseUrl || process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
+  const actionUrl = ctx.actionUrl || resolveDefaultActionUrl(eventType, ctx.applicationId, baseUrl);
 
   const wrapHtml = (heading: string, message: string, buttonText?: string, buttonUrl?: string) => `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
@@ -238,9 +261,9 @@ function getFallbackContent(eventType: CommunicationEventType, ctx: EmailContext
           "Lamaran Anda Telah Berhasil Diterima",
           `Terima kasih telah melamar posisi <strong>${ctx.jobTitle}</strong>. Kami telah menerima berkas lamaran Anda dan saat ini tim kami sedang melakukan peninjauan awal. Anda dapat memantau status lamaran secara berkala melalui tautan di bawah ini.`,
           "Lihat Status Lamaran",
-          appLink
+          actionUrl
         ),
-        body_text: `Halo ${ctx.candidateFirstName},\n\nLamaran Anda untuk posisi ${ctx.jobTitle} telah berhasil kami terima. Kami akan mengabarkan perkembangan selanjutnya.\n\nLihat status: ${appLink}\n\nTim SmartHR`,
+        body_text: `Halo ${ctx.candidateFirstName},\n\nLamaran Anda untuk posisi ${ctx.jobTitle} telah berhasil kami terima. Kami akan mengabarkan perkembangan selanjutnya.\n\nLihat status: ${actionUrl}\n\nTim SmartHR`,
         internal_tone_notes: "Fallback template: application_received",
       };
 
@@ -251,9 +274,9 @@ function getFallbackContent(eventType: CommunicationEventType, ctx: EmailContext
           "Selamat! Anda Lolos Tahap Screening Awal",
           `Kami senang memberitahukan bahwa kualifikasi Anda untuk posisi <strong>${ctx.jobTitle}</strong> telah lolos tahap peninjauan awal. Langkah berikutnya adalah menyelesaikan asesmen kepribadian singkat kami.`,
           "Mulai Asesmen Kepribadian",
-          appLink
+          actionUrl
         ),
-        body_text: `Halo ${ctx.candidateFirstName},\n\nSelamat! Anda berhasil lolos tahap screening awal untuk posisi ${ctx.jobTitle}. Silakan lanjutkan ke asesmen kepribadian melalui: ${appLink}\n\nTim SmartHR`,
+        body_text: `Halo ${ctx.candidateFirstName},\n\nSelamat! Anda berhasil lolos tahap screening awal untuk posisi ${ctx.jobTitle}. Silakan lanjutkan ke asesmen kepribadian melalui: ${actionUrl}\n\nTim SmartHR`,
         internal_tone_notes: "Fallback template: screening_passed",
       };
 
@@ -262,10 +285,123 @@ function getFallbackContent(eventType: CommunicationEventType, ctx: EmailContext
         subject: `Pembaruan Status Lamaran: ${ctx.jobTitle}`,
         body_html: wrapHtml(
           "Pembaruan Proses Rekrutmen",
-          `Terima kasih atas minat dan waktu yang Anda luangkan untuk melamar posisi <strong>${ctx.jobTitle}</strong> di SmartHR. Setelah peninjauan saksama, saat ini kami memutuskan untuk melanjutkan proses dengan kandidat lain yang profilnya lebih mendekati kebutuhan spesifik kami saat ini. Kami mendoakan yang terbaik untuk perjalanan karier Anda ke depan.`,
+          `Terima kasih atas minat dan waktu yang Anda luangkan untuk melamar posisi <strong>${ctx.jobTitle}</strong> di SmartHR. Setelah peninjauan saksama, saat ini kami memutuskan untuk melanjutkan proses dengan kandidat lain yang profilnya lebih mendekati kebutuhan spesifik kami saat ini. Kami mendoakan yang terbaik untuk perjalanan karier Anda ke depan.`
         ),
         body_text: `Halo ${ctx.candidateFirstName},\n\nTerima kasih telah melamar posisi ${ctx.jobTitle}. Setelah peninjauan, kami memutuskan untuk melanjutkan proses dengan kandidat lain. Kami mendoakan kesuksesan karier Anda ke depan.\n\nTim SmartHR`,
         internal_tone_notes: "Fallback template: screening_rejected",
+      };
+
+    case "screening_review":
+      return {
+        subject: `Lamaran Sedang Ditinjau: ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Lamaran Anda Sedang Ditinjau Tim Rekruter",
+          `Terima kasih telah melamar posisi <strong>${ctx.jobTitle}</strong>. Berkas lamaran Anda saat ini sedang dalam peninjauan mendalam oleh tim rekruter kami. Kami akan mengabari kembali perkembangan selanjutnya.`,
+          "Lihat Status Lamaran",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nLamaran Anda untuk posisi ${ctx.jobTitle} sedang ditinjau mendalam oleh tim rekruter kami.\n\nPantau status: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: screening_review",
+      };
+
+    case "personality_reminder":
+      return {
+        subject: `Pengingat: Asesmen Kepribadian ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Pengingat: Selesaikan Asesmen Kepribadian Anda",
+          `Kami mengingatkan bahwa Anda belum menyelesaikan asesmen kepribadian untuk posisi <strong>${ctx.jobTitle}</strong>. Tahap ini sangat penting agar kami dapat melanjutkan proses lamaran Anda ke tahap berikutnya.`,
+          "Lanjutkan Asesmen Kepribadian",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nJangan lupa untuk menyelesaikan asesmen kepribadian posisi ${ctx.jobTitle}.\n\nAkses di: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: personality_reminder",
+      };
+
+    case "personality_completed":
+      return {
+        subject: `Konfirmasi: Asesmen Kepribadian Selesai - ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Asesmen Kepribadian Berhasil Diselesaikan",
+          `Terima kasih telah menyelesaikan asesmen kepribadian untuk posisi <strong>${ctx.jobTitle}</strong>. Tim kami sedang meninjau profil Anda untuk penjadwalan tahap wawancara selanjutnya.`,
+          "Lihat Status Lamaran",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nAsesmen kepribadian Anda untuk posisi ${ctx.jobTitle} telah kami terima. Kami akan mengabari perkembangan berikutnya.\n\nStatus: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: personality_completed",
+      };
+
+    case "interview_invitation":
+      return {
+        subject: `Undangan Wawancara AI: ${ctx.jobTitle} - SmartHR`,
+        body_html: wrapHtml(
+          "Undangan Sesi Wawancara AI SmartHR",
+          `Selamat! Anda diundang untuk mengikuti sesi wawancara berbasis AI interaktif untuk posisi <strong>${ctx.jobTitle}</strong>. Sesi ini dapat Anda akses secara fleksibel sebelum batas waktu yang ditentukan (${ctx.interviewDeadline || "3 hari kerja"}). Pastikan Anda berada di tempat yang tenang dengan koneksi internet stabil.`,
+          "Mulai Wawancara AI",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nSelamat! Anda diundang untuk sesi wawancara AI posisi ${ctx.jobTitle}. Batas waktu: ${ctx.interviewDeadline || "3 hari kerja"}.\n\nMulai wawancara: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: interview_invitation",
+      };
+
+    case "interview_reminder_48h":
+      return {
+        subject: `Pengingat (48 Jam Tersisa): Wawancara AI ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Pengingat: 48 Jam Tersisa untuk Wawancara AI",
+          `Waktu penyelesaian sesi wawancara AI Anda untuk posisi <strong>${ctx.jobTitle}</strong> tersisa 48 jam lagi (${ctx.interviewDeadline || "segera"}). Silakan luangkan waktu sekitar 15-20 menit untuk menyelesaikannya.`,
+          "Mulai Wawancara AI",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nWawancara AI posisi ${ctx.jobTitle} tersisa 48 jam lagi (${ctx.interviewDeadline || "segera"}).\n\nMulai: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: interview_reminder_48h",
+      };
+
+    case "interview_reminder_24h":
+      return {
+        subject: `PENTING: 24 Jam Terakhir untuk Wawancara AI ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "PENTING: 24 Jam Terakhir untuk Wawancara AI",
+          `Hari ini adalah hari terakhir untuk menyelesaikan sesi wawancara AI posisi <strong>${ctx.jobTitle}</strong> (${ctx.interviewDeadline || "hari ini"}). Sesi akan ditutup otomatis setelah batas waktu terlewati.`,
+          "Mulai Wawancara Sekarang",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nHari ini adalah hari terakhir wawancara AI posisi ${ctx.jobTitle}.\n\nAkses segera: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: interview_reminder_24h",
+      };
+
+    case "interview_completed":
+      return {
+        subject: `Konfirmasi: Wawancara AI Selesai - ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Terima Kasih Telah Menyelesaikan Wawancara AI",
+          `Terima kasih banyak atas waktu dan partisipasi Anda dalam sesi wawancara AI untuk posisi <strong>${ctx.jobTitle}</strong>. Tim rekruter kami saat ini sedang meninjau transkrip dan analisis wawancara Anda secara menyeluruh.`,
+          "Pantau Status Lamaran",
+          actionUrl
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nTerima kasih telah menyelesaikan wawancara AI posisi ${ctx.jobTitle}. Tim kami sedang meninjau hasilnya.\n\nPantau status: ${actionUrl}\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: interview_completed",
+      };
+
+    case "interview_expired":
+      return {
+        subject: `Pemberitahuan: Batas Waktu Wawancara Telah Berakhir - ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Batas Waktu Wawancara Telah Berakhir",
+          `Kami menginformasikan bahwa batas waktu pengerjaan wawancara AI untuk posisi <strong>${ctx.jobTitle}</strong> telah berakhir, sehingga status lamaran Anda telah ditutup otomatis. Jika terdapat kendala mendesak, silakan hubungi tim rekrutmen kami.`
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nBatas waktu wawancara AI posisi ${ctx.jobTitle} telah berakhir dan status lamaran telah ditutup.\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: interview_expired",
+      };
+
+    case "final_rejection":
+      return {
+        subject: `Pembaruan Hasil Seleksi: ${ctx.jobTitle}`,
+        body_html: wrapHtml(
+          "Pembaruan Hasil Seleksi Akhir",
+          `Terima kasih atas seluruh waktu, dedikasi, dan usaha yang Anda berikan dalam rangkaian rekrutmen posisi <strong>${ctx.jobTitle}</strong>. Setelah pertimbangan mendalam dari seluruh tahapan seleksi, saat ini kami memutuskan untuk melanjutkan proses dengan kandidat lain. Kami sangat menghargai minat Anda dan mendoakan kesuksesan terbaik dalam perjalanan karier Anda ke depan.`
+        ),
+        body_text: `Halo ${ctx.candidateFirstName},\n\nTerima kasih atas partisipasi Anda dalam seleksi posisi ${ctx.jobTitle}. Kami memutuskan untuk melanjutkan proses dengan kandidat lain. Sukses selalu untuk karier Anda ke depan.\n\nTim SmartHR`,
+        internal_tone_notes: "Fallback template: final_rejection",
       };
 
     default:
@@ -275,9 +411,9 @@ function getFallbackContent(eventType: CommunicationEventType, ctx: EmailContext
           "Informasi Terkait Lamaran Anda",
           `Terdapat pembaruan pada proses lamaran Anda untuk posisi <strong>${ctx.jobTitle}</strong>. Silakan kunjungi portal kandidat untuk melihat informasi selengkapnya.`,
           "Buka Portal Kandidat",
-          appLink
+          actionUrl
         ),
-        body_text: `Halo ${ctx.candidateFirstName},\n\nTerdapat pembaruan pada lamaran posisi ${ctx.jobTitle}. Kunjungi portal kandidat: ${appLink}\n\nTim SmartHR`,
+        body_text: `Halo ${ctx.candidateFirstName},\n\nTerdapat pembaruan pada lamaran posisi ${ctx.jobTitle}. Kunjungi portal kandidat: ${actionUrl}\n\nTim SmartHR`,
         internal_tone_notes: "Fallback generic template",
       };
   }
@@ -298,35 +434,48 @@ export async function generateEmailContent(
       systemPrompt: SYSTEM_PROMPT,
       userPrompt: userMessage,
       temperature: 0.4,
-      maxTokens: 2000,
+      maxTokens: 1000,
+      modelOverride: "mistral-medium-3-5",
+      timeoutMs: 300000, // 5 minutes timeout
     });
 
     const elapsed = Date.now() - startTime;
 
     if (hermesResponse.success && hermesResponse.content) {
       const parsed = parseHermesResponse(hermesResponse.content);
+      const modelName = hermesResponse.modelUsed || "mistral-medium-3-5";
       return {
         ...parsed,
-        modelUsed: hermesResponse.modelUsed || "hermes-agent",
+        modelUsed: modelName,
         durationMs: elapsed,
+        hermes_model: modelName,
+        hermes_duration_ms: elapsed,
+        hermes_error: null,
       };
     } else {
-      console.warn(`[HermesCommunicator] Hermes call failed or empty (${hermesResponse.error || "no content"}). Using fallback template.`);
+      const errMsg = hermesResponse.error || "No content returned from Hermes Agent";
+      console.error("[HermesCommunicator] Error generating email via Hermes:", errMsg);
       const fallback = getFallbackContent(eventType, context);
       return {
         ...fallback,
         modelUsed: "fallback-template",
         durationMs: elapsed,
+        hermes_model: "fallback-template",
+        hermes_duration_ms: elapsed,
+        hermes_error: errMsg,
       };
     }
   } catch (error: any) {
     const elapsed = Date.now() - startTime;
-    console.error(`[HermesCommunicator] Exception during email generation (${error.message}). Using fallback template.`);
+    console.error("[HermesCommunicator] Error generating email via Hermes:", error);
     const fallback = getFallbackContent(eventType, context);
     return {
       ...fallback,
       modelUsed: "fallback-template",
       durationMs: elapsed,
+      hermes_model: "fallback-template",
+      hermes_duration_ms: elapsed,
+      hermes_error: error instanceof Error ? error.message : String(error),
     };
   }
 }

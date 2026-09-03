@@ -91,6 +91,38 @@ export async function checkCommunicationEligibility(
 }
 
 /**
+ * Resolves specific action URL for candidate Call-to-Action buttons based on event type.
+ */
+export function resolveActionUrl(
+  eventType: CommunicationEventType,
+  applicationId: string,
+  customBaseUrl?: string
+): string {
+  const baseUrl = (customBaseUrl || process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
+
+  switch (eventType) {
+    case "screening_passed":
+    case "personality_reminder":
+      return `${baseUrl}/applications/${applicationId}/personality-test`;
+
+    case "interview_invitation":
+    case "interview_reminder_48h":
+    case "interview_reminder_24h":
+      return `${baseUrl}/applications/${applicationId}/interview`;
+
+    case "application_received":
+    case "screening_review":
+    case "screening_rejected":
+    case "personality_completed":
+    case "interview_completed":
+    case "interview_expired":
+    case "final_rejection":
+    default:
+      return `${baseUrl}/applications/${applicationId}`;
+  }
+}
+
+/**
  * Assemble full communication context by resolving application, job, and candidate email.
  */
 async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
@@ -152,6 +184,8 @@ async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
 
   const fullName = candidate.full_name || app.cv_parsed_name || "Kandidat";
   const firstName = fullName.trim().split(/\s+/)[0] || "Kandidat";
+  const baseUrl = (process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
+  const actionUrl = resolveActionUrl(params.eventType, app.id, baseUrl);
 
   const context: EmailContext = {
     candidateName: fullName,
@@ -161,7 +195,8 @@ async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
     applicationId: app.id,
     applicationDate: app.created_at ? new Date(app.created_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : undefined,
     interviewDeadline: params.interviewDeadline || (app.interview_deadline ? new Date(app.interview_deadline).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" }) : undefined),
-    appBaseUrl: process.env.APP_BASE_URL || "http://localhost:3000",
+    appBaseUrl: baseUrl,
+    actionUrl,
   };
 
   return {
@@ -209,6 +244,12 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
     // 2. Content generation with Hermes
     const generated = await generateEmailContent(eventType, context);
 
+    let hermesErrorMessage: string | null = null;
+    if (generated.hermes_error) {
+      hermesErrorMessage = `[Fallback Used] Hermes Failed: ${generated.hermes_error}`;
+      console.warn("[CommEngine] Dispatched using fallback due to:", generated.hermes_error);
+    }
+
     const supabase = createAdminClient();
 
     // 3. Insert initial log record (status: queued)
@@ -225,8 +266,9 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
         email_body_html: generated.body_html,
         email_body_text: generated.body_text,
         status: "queued",
-        hermes_model: generated.modelUsed,
-        hermes_duration_ms: generated.durationMs,
+        hermes_model: generated.hermes_model || generated.modelUsed,
+        hermes_duration_ms: generated.hermes_duration_ms || generated.durationMs,
+        error_message: hermesErrorMessage,
       })
       .select("id")
       .maybeSingle();
@@ -258,14 +300,19 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
             status: "sent",
             provider_message_id: transportResult.messageId || null,
             sent_at: new Date().toISOString(),
+            error_message: hermesErrorMessage,
           })
           .eq("id", logId);
       } else {
+        const combinedError = hermesErrorMessage
+          ? `${hermesErrorMessage} | Transport Error: ${transportResult.error || "Unknown transport error"}`
+          : (transportResult.error || "Unknown transport error");
+
         await supabase
           .from("communication_logs")
           .update({
             status: "failed",
-            error_message: transportResult.error || "Unknown transport error",
+            error_message: combinedError,
           })
           .eq("id", logId);
       }

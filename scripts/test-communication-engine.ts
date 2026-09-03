@@ -28,43 +28,60 @@ async function runTestSuite() {
 
   const args = process.argv.slice(2);
   const targetEmail = args.find((a) => a.startsWith("--to="))?.split("=")[1];
+  const eventArg = args.find((a) => a.startsWith("--event="))?.split("=")[1] as CommunicationEventType | undefined;
   const dryRunOnly = !targetEmail || process.env.COMMUNICATION_DRY_RUN === "true";
 
   console.log(`Config COMMUNICATION_ENABLED : ${process.env.COMMUNICATION_ENABLED}`);
   console.log(`Config COMMUNICATION_DRY_RUN : ${process.env.COMMUNICATION_DRY_RUN}`);
   console.log(`Config RESEND_API_KEY        : ${process.env.RESEND_API_KEY ? "CONFIGURED (hidden)" : "NOT SET (using dry-run)"}`);
   console.log(`Config SENDER                : ${process.env.EMAIL_FROM_NAME} <${process.env.EMAIL_FROM_ADDRESS}>`);
+  console.log(`Target Event Filter          : ${eventArg || "ALL SAMPLE EVENTS"}`);
   console.log(`Mode                         : ${dryRunOnly ? "DRY-RUN SIMULATION" : `LIVE DISPATCH to ${targetEmail}`}\n`);
 
   // -------------------------------------------------------------
   // TEST 1: Hermes Content Generation & Quality Validation
   // -------------------------------------------------------------
   console.log("--- TEST 1: HERMES CONTENT GENERATION (Indonesian) ---");
-  const sampleEvents: CommunicationEventType[] = [
-    "application_received",
-    "screening_passed",
-    "screening_rejected",
-    "interview_invitation",
-  ];
+  const sampleEvents: CommunicationEventType[] = eventArg
+    ? [eventArg]
+    : [
+        "application_received",
+        "screening_passed",
+        "screening_rejected",
+        "interview_invitation",
+      ];
 
   for (const evt of sampleEvents) {
     console.log(`\n⏳ Generating email for event: '${evt}'...`);
     const startTime = Date.now();
+    const testAppId = "test-app-uuid-12345";
+    const testBaseUrl = "https://smarthr.my.id";
+
+    // Resolve specific actionUrl
+    let expectedActionUrl = `${testBaseUrl}/applications/${testAppId}`;
+    if (evt === "screening_passed" || evt === "personality_reminder") {
+      expectedActionUrl = `${testBaseUrl}/applications/${testAppId}/personality-test`;
+    } else if (evt === "interview_invitation" || evt === "interview_reminder_48h" || evt === "interview_reminder_24h") {
+      expectedActionUrl = `${testBaseUrl}/applications/${testAppId}/interview`;
+    }
+
     const result = await generateEmailContent(evt, {
       candidateName: "Budi Santoso",
       candidateFirstName: "Budi",
       jobTitle: "Senior Fullstack Engineer",
       jobLocation: "Jakarta (Hybrid)",
-      applicationId: "test-app-uuid-12345",
+      applicationId: testAppId,
       applicationDate: "2 September 2026",
       interviewDeadline: "5 September 2026",
-      appBaseUrl: "http://localhost:3000",
+      appBaseUrl: testBaseUrl,
+      actionUrl: expectedActionUrl,
     });
 
     const elapsed = Date.now() - startTime;
     console.log(`   Engine:     ${result.modelUsed} (${elapsed}ms)`);
     console.log(`   Subject:    "${result.subject}"`);
     console.log(`   Tone Notes: ${result.internal_tone_notes}`);
+    console.log(`   Target CTA: ${expectedActionUrl}`);
 
     // Assertions
     if (!result.subject || result.subject.length === 0) {
@@ -83,7 +100,26 @@ async function runTestSuite() {
       throw new Error(`Safety violation: Raw JSON detected in body for event ${evt}`);
     }
 
-    console.log(`   Validation: ✅ PASSED (clean HTML, appropriate tone, no leaked internal rubrics)`);
+    // CTA URL validation
+    if (evt === "screening_passed" || evt === "personality_reminder") {
+      if (!result.body_html.includes("/personality-test")) {
+        throw new Error(`CTA Link violation: expected '/personality-test' in body_html for event ${evt}, but not found!`);
+      }
+      console.log(`   CTA Check:  ✅ Contains '/personality-test'`);
+    } else if (evt === "interview_invitation" || evt === "interview_reminder_48h" || evt === "interview_reminder_24h") {
+      if (!result.body_html.includes("/interview")) {
+        throw new Error(`CTA Link violation: expected '/interview' in body_html for event ${evt}, but not found!`);
+      }
+      console.log(`   CTA Check:  ✅ Contains '/interview'`);
+    }
+
+    if (eventArg) {
+      console.log("\n--- GENERATED HTML BODY ---");
+      console.log(result.body_html);
+      console.log("----------------------------\n");
+    }
+
+    console.log(`   Validation: ✅ PASSED (clean HTML, correct CTA, appropriate tone, no leaked internal rubrics)`);
   }
 
   // -------------------------------------------------------------
