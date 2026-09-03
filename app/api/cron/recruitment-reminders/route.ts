@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { sendRecruitmentEmail, checkCommunicationEligibility } from "@/lib/communication-engine";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function isAuthorized(request: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;

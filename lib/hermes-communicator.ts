@@ -27,6 +27,8 @@ export interface EmailContext {
   actionUrl?: string;
 }
 
+export type CommunicationContext = EmailContext;
+
 function resolveDefaultActionUrl(eventType: CommunicationEventType, applicationId: string, baseUrl: string): string {
   const cleanBase = baseUrl.replace(/\/+$/, "");
   switch (eventType) {
@@ -475,6 +477,157 @@ export async function generateEmailContent(
       durationMs: elapsed,
       hermes_model: "fallback-template",
       hermes_duration_ms: elapsed,
+      hermes_error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Strips HTML tags and normalizes styling into WhatsApp markdown (*bold*, _italic_).
+ */
+function cleanWhatsAppText(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<p[^>]*>/gi, "")
+    .replace(/<b[^>]*>(.*?)<\/b>/gi, "*$1*")
+    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "*$1*")
+    .replace(/<i[^>]*>(.*?)<\/i>/gi, "_$1_")
+    .replace(/<em[^>]*>(.*?)<\/em>/gi, "_$1_")
+    .replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"[^>]*>(.*?)<\/a>/gi, "$2: $1")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Clean fallback plain-text templates for WhatsApp notifications without any HTML tags.
+ */
+function getWhatsAppFallbackContent(eventType: CommunicationEventType, ctx: EmailContext): string {
+  const baseUrl = ctx.appBaseUrl || "https://smarthr.my.id";
+  const actionUrl = ctx.actionUrl || resolveDefaultActionUrl(eventType, ctx.applicationId, baseUrl);
+  const name = ctx.candidateFirstName;
+  const job = ctx.jobTitle;
+
+  switch (eventType) {
+    case "application_received":
+      return `Halo *${name}*, 👋\n\nTerima kasih telah melamar posisi *${job}* di *SmartHR*. Berkas Anda telah berhasil kami terima dan saat ini sedang dalam proses peninjauan oleh tim rekrutmen.\n\nPantau status lamaran Anda di:\n${actionUrl}\n\nSalam hangat,\n*Tim Rekrutmen SmartHR*`;
+
+    case "screening_passed":
+      return `Halo *${name}*, 🎉\n\nSelamat! Berkas lamaran Anda untuk posisi *${job}* telah *lolos tahap screening awal*.\n\nLangkah berikutnya adalah menyelesaikan *Asesmen Kepribadian* (~20 menit). Silakan mulai melalui tautan berikut:\n👉 ${actionUrl}\n\nSemoga sukses!\n*Tim Rekrutmen SmartHR*`;
+
+    case "screening_rejected":
+      return `Halo *${name}*,\n\nTerima kasih atas minat Anda melamar posisi *${job}* di *SmartHR*.\n\nSetelah peninjauan berkas secara saksama, saat ini kami belum dapat melanjutkan proses ke tahap berikutnya. Profil Anda akan tetap tersimpan dalam talent database kami untuk peluang mendatang.\n\nSukses selalu untuk karier Anda!\n*Tim Rekrutmen SmartHR*`;
+
+    case "screening_review":
+      return `Halo *${name}*,\n\nBerkas lamaran Anda untuk posisi *${job}* saat ini sedang dalam peninjauan mendalam oleh tim rekrutmen kami. Kami akan mengabari Anda setelah evaluasi selesai.\n\nPantau status lamaran Anda:\n${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "personality_completed":
+      return `Halo *${name}*, ✅\n\nTerima kasih telah menyelesaikan *Asesmen Kepribadian* untuk posisi *${job}*. Hasil asesmen Anda telah tercatat dan sedang dipelajari oleh tim rekrutmen.\n\nPantau perkembangan seleksi Anda:\n${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "interview_invitation":
+      return `Halo *${name}*, 🎯\n\nSelamat! Anda diundang mengikuti *Wawancara AI* untuk posisi *${job}*.\n\nSesi wawancara simulasi interaktif dapat Anda akses kapan saja sebelum batas waktu melalui tautan ini:\n👉 ${actionUrl}\n\nPersiapkan diri dengan baik dan semoga sukses!\n*Tim Rekrutmen SmartHR*`;
+
+    case "interview_reminder_48h":
+      return `Halo *${name}*, ⏰\n\nPengingat ramah: Wawancara AI untuk posisi *${job}* memiliki sisa waktu sekitar *48 jam*.\n\nSilakan mulai wawancara Anda di sini:\n👉 ${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "interview_reminder_24h":
+      return `Halo *${name}*, ⚠️\n\nPengingat penting: Tenggat waktu Wawancara AI untuk posisi *${job}* berakhir dalam waktu kurang dari *24 jam*.\n\nSegera selesaikan wawancara Anda melalui link berikut:\n👉 ${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "interview_completed":
+      return `Halo *${name}*, 🌟\n\nSelamat! Anda telah menyelesaikan sesi *Wawancara AI* untuk posisi *${job}*. Tim kami sedang meninjau transkrip dan hasil evaluasi secara menyeluruh.\n\nPantau status lamaran Anda:\n${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "interview_expired":
+      return `Halo *${name}*,\n\nKami menginformasikan bahwa batas waktu pelaksanaan Wawancara AI untuk posisi *${job}* telah berakhir. Status lamaran Anda telah diperbarui menjadi kedaluwarsa.\n\nTerima kasih atas partisipasi Anda di *SmartHR*.\n*Tim Rekrutmen SmartHR*`;
+
+    case "personality_reminder":
+      return `Halo *${name}*, 📋\n\nPengingat ramah: Anda telah lolos tahap screening untuk posisi *${job}*, namun belum menyelesaikan *Asesmen Kepribadian*.\n\nSilakan luangkan waktu ~20 menit untuk menyelesaikannya:\n👉 ${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+
+    case "final_rejection":
+      return `Halo *${name}*,\n\nTerima kasih telah mengikuti seluruh rangkaian proses seleksi untuk posisi *${job}* di *SmartHR*.\n\nSetelah evaluasi mendalam, kami memutuskan untuk belum dapat menawarkan posisi tersebut pada kesempatan ini. Kami sangat mengapresiasi waktu dan usaha yang telah Anda berikan.\n\nSemoga sukses dalam perjalanan karier Anda selanjutnya!\n*Tim Rekrutmen SmartHR*`;
+
+    default:
+      return `Halo *${name}*,\n\nTerdapat pembaruan pada status lamaran Anda untuk posisi *${job}* di *SmartHR*. Silakan akses portal kandidat:\n👉 ${actionUrl}\n\n*Tim Rekrutmen SmartHR*`;
+  }
+}
+
+/**
+ * Generate personalized WhatsApp recruitment notification message using Hermes Agent.
+ * Strict formatting: pure text with WhatsApp styling (*bold*, _italic_), no HTML tags, actionUrl included.
+ */
+export async function generateWhatsAppContent(
+  eventType: CommunicationEventType,
+  context: CommunicationContext
+): Promise<{
+  message: string;
+  hermes_duration_ms: number;
+  hermes_model: string;
+  hermes_error?: string | null;
+}> {
+  const startTime = Date.now();
+  const baseUrl = (context.appBaseUrl || process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
+  const actionUrl = context.actionUrl || resolveDefaultActionUrl(eventType, context.applicationId, baseUrl);
+
+  const waPrompt = `Anda adalah Asisten Rekrutmen SmartHR yang bertugas menyusun pesan notifikasi WhatsApp resmi, ramah, dan profesional untuk kandidat.
+KANDIDAT: ${context.candidateName} (panggilan: ${context.candidateFirstName})
+POSISI: ${context.jobTitle}${context.jobLocation ? ` (${context.jobLocation})` : ""}
+TAHAPAN / EVENT: ${eventType}
+ACTION_URL: ${actionUrl}
+
+ATURAN PESAN WHATSAPP:
+1. Tulis pesan dalam Bahasa Indonesia yang hangat, sopan, dan jelas.
+2. Gunakan styling khas WhatsApp: *bold* untuk penekanan, nama, dan posisi; emoji yang relevan (👋, 🎉, 🎯, ⏰, ✅).
+3. DILARANG MENGGUNAKAN TAG HTML APA PUN (<p>, <br>, <b>, <a>, dll). Gunakan baris baru biasa.
+4. WAJIB MENYERTAKAN ACTION_URL secara persis dan utuh: ${actionUrl}
+5. Dilarang membocorkan skor angka numerik, persentase, atau rubrik internal.
+6. Panjang pesan maksimal 3-4 paragraf singkat, cocok untuk layar WhatsApp.
+Kembalikan HANYA teks pesan WhatsApp yang siap dikirim tanpa format JSON atau tag pembungkus lainnya.`;
+
+  try {
+    const hermesResponse = await runHermesAgent({
+      systemPrompt: "Anda adalah sistem pengirim pesan WhatsApp resmi SmartHR. Tulis pesan teks langsung tanpa tag HTML.",
+      userPrompt: waPrompt,
+      temperature: 0.3,
+      maxTokens: 1000,
+      modelOverride: "mistral-medium-3-5",
+      timeoutMs: 300000,
+    });
+
+    const elapsed = Date.now() - startTime;
+
+    if (hermesResponse.success && hermesResponse.content?.trim()) {
+      let cleaned = cleanWhatsAppText(hermesResponse.content);
+      if (!cleaned.includes(actionUrl)) {
+        cleaned += `\n\n👉 ${actionUrl}`;
+      }
+      const modelName = hermesResponse.modelUsed || "mistral-medium-3-5";
+      return {
+        message: cleaned,
+        hermes_duration_ms: elapsed,
+        hermes_model: modelName,
+        hermes_error: null,
+      };
+    } else {
+      const errMsg = hermesResponse.error || "Hermes returned empty response";
+      console.error("[HermesCommunicator] WhatsApp generation error:", errMsg);
+      return {
+        message: getWhatsAppFallbackContent(eventType, { ...context, actionUrl }),
+        hermes_duration_ms: elapsed,
+        hermes_model: "fallback-template",
+        hermes_error: errMsg,
+      };
+    }
+  } catch (error: any) {
+    const elapsed = Date.now() - startTime;
+    console.error("[HermesCommunicator] Exception during WhatsApp generation:", error);
+    return {
+      message: getWhatsAppFallbackContent(eventType, { ...context, actionUrl }),
+      hermes_duration_ms: elapsed,
+      hermes_model: "fallback-template",
       hermes_error: error instanceof Error ? error.message : String(error),
     };
   }

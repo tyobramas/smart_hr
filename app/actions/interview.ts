@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireProfile } from "@/lib/supabase/auth";
 import {
@@ -365,16 +366,20 @@ export async function submitAnswerAndGetNextAction(
     .update(updatePayload)
     .eq("id", applicationId);
 
-  // Communication Trigger: interview_completed (Non-blocking)
+  // Communication Trigger: interview_completed (Asynchronous via Next.js 15 after())
   if (isInterviewDone) {
-    sendRecruitmentEmail({
-      eventType: "interview_completed",
-      applicationId,
-      candidate: profile,
-      job: jobData as any,
-    }).catch((err) =>
-      console.error("[CommEngine] interview_completed email error:", err)
-    );
+    after(async () => {
+      try {
+        await sendRecruitmentEmail({
+          eventType: "interview_completed",
+          applicationId,
+          candidate: profile,
+          job: jobData as any,
+        });
+      } catch (err) {
+        console.error("[CommEngine:BackgroundError] interview_completed failed in after():", err);
+      }
+    });
   }
 
   revalidatePath("/applications");

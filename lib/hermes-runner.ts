@@ -229,7 +229,7 @@ async function callHermesApi(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.HERMES_API_KEY || "sk-nry-kZaU_a5GHRP3DdqZBwYoeOXRm-hExbYYNjyBkyg8-y8"}`,
+          Authorization: `Bearer ${process.env.HERMES_API_KEY}`,
           "HTTP-Referer": "https://smart-hr.local",
           "X-Title": "Smart HR Hermes Screener",
         },

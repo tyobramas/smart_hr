@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireProfile } from "@/lib/supabase/auth";
 import { PersonalityTestResult, Job } from "@/types/database";
@@ -296,15 +297,19 @@ export async function submitPersonalityTestAction(
     return { success: false, error: updateError.message };
   }
 
-  // Communication Trigger: personality_completed (Non-blocking)
-  sendRecruitmentEmail({
-    eventType: "personality_completed",
-    applicationId,
-    candidate: profile,
-    job: app.job as any,
-  }).catch((err) =>
-    console.error("[CommEngine] personality_completed email error:", err)
-  );
+  // Communication Trigger: personality_completed (Asynchronous via Next.js 15 after())
+  after(async () => {
+    try {
+      await sendRecruitmentEmail({
+        eventType: "personality_completed",
+        applicationId,
+        candidate: profile,
+        job: app.job as any,
+      });
+    } catch (err) {
+      console.error("[CommEngine:BackgroundError] personality_completed failed in after():", err);
+    }
+  });
 
   revalidatePath("/applications");
   revalidatePath(`/applications/${applicationId}/personality-test`);

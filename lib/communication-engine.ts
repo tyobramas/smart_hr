@@ -218,6 +218,8 @@ async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
  */
 export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): Promise<CommunicationResult> {
   const { eventType, applicationId } = params;
+  let logId: string | null = null;
+  const supabase = createAdminClient();
 
   try {
     const assembled = await assembleContext(params);
@@ -250,10 +252,7 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
       console.warn("[CommEngine] Dispatched using fallback due to:", generated.hermes_error);
     }
 
-    const supabase = createAdminClient();
-
     // 3. Insert initial log record (status: queued)
-    let logId: string | null = null;
     const { data: insertedLog, error: logInsertErr } = await supabase
       .from("communication_logs")
       .insert({
@@ -326,6 +325,22 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
   } catch (error: any) {
     const errMsg = error?.message || "Unhandled exception in sendRecruitmentEmail";
     console.error(`[CommEngine] Exception during email process for app ${applicationId}:`, errMsg);
+
+    // Ensure log does not stay stuck in 'queued' on unexpected error
+    if (logId) {
+      try {
+        await supabase
+          .from("communication_logs")
+          .update({
+            status: "failed",
+            error_message: `Unhandled Error: ${errMsg}`,
+          })
+          .eq("id", logId);
+      } catch (updateErr) {
+        console.error(`[CommEngine] Failed to mark log ${logId} as failed:`, updateErr);
+      }
+    }
+
     return {
       success: false,
       error: errMsg,

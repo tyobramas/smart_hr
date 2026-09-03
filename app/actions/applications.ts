@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireProfile, requireAdmin } from "@/lib/supabase/auth";
 import { ApplicationStatus } from "@/types/database";
@@ -204,19 +205,9 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
     return { success: false, error: insertErr.message };
   }
 
-  // 6. Proactive Candidate Communication (Asynchronous / Non-blocking)
+  // 6. Proactive Candidate Communication (Asynchronous via Next.js 15 after())
   if (insertedApp?.id) {
     const createdAppId = insertedApp.id;
-
-    // Trigger EVT_APPLICATION_RECEIVED
-    sendRecruitmentEmail({
-      eventType: "application_received",
-      applicationId: createdAppId,
-      candidate: profile,
-      job: jobData as any,
-    }).catch((err) =>
-      console.error("[CommEngine] application_received email error:", err)
-    );
 
     // Trigger Screening Outcome Email
     let outcomeEventType: CommunicationEventType = "screening_review";
@@ -226,14 +217,29 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
       outcomeEventType = "screening_rejected";
     }
 
-    sendRecruitmentEmail({
-      eventType: outcomeEventType,
-      applicationId: createdAppId,
-      candidate: profile,
-      job: jobData as any,
-    }).catch((err) =>
-      console.error(`[CommEngine] ${outcomeEventType} email error:`, err)
-    );
+    after(async () => {
+      try {
+        await sendRecruitmentEmail({
+          eventType: "application_received",
+          applicationId: createdAppId,
+          candidate: profile,
+          job: jobData as any,
+        });
+      } catch (err) {
+        console.error("[CommEngine:BackgroundError] application_received failed in after():", err);
+      }
+
+      try {
+        await sendRecruitmentEmail({
+          eventType: outcomeEventType,
+          applicationId: createdAppId,
+          candidate: profile,
+          job: jobData as any,
+        });
+      } catch (err) {
+        console.error(`[CommEngine:BackgroundError] ${outcomeEventType} failed in after():`, err);
+      }
+    });
   }
 
   revalidatePath("/applications");
@@ -377,21 +383,21 @@ export async function updateApplicationStatusAction(
     return { error: error.message };
   }
 
-  // Communication Trigger for status transitions
-  if (status === "invited_interview") {
-    sendRecruitmentEmail({
-      eventType: "interview_invitation",
-      applicationId,
-    }).catch((err) =>
-      console.error("[CommEngine] interview_invitation trigger error:", err)
-    );
-  } else if (status === "rejected") {
-    sendRecruitmentEmail({
-      eventType: "final_rejection",
-      applicationId,
-    }).catch((err) =>
-      console.error("[CommEngine] final_rejection trigger error:", err)
-    );
+  // Communication Trigger for status transitions (Asynchronous via Next.js 15 after())
+  if (status === "invited_interview" || status === "rejected") {
+    const eventType: CommunicationEventType =
+      status === "invited_interview" ? "interview_invitation" : "final_rejection";
+
+    after(async () => {
+      try {
+        await sendRecruitmentEmail({
+          eventType,
+          applicationId,
+        });
+      } catch (err) {
+        console.error(`[CommEngine:BackgroundError] ${eventType} failed in after():`, err);
+      }
+    });
   }
 
   revalidatePath("/admin/dashboard");
