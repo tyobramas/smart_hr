@@ -6,6 +6,7 @@ import { requireProfile, requireAdmin } from "@/lib/supabase/auth";
 import { ApplicationStatus } from "@/types/database";
 import { runHermesCvScreening } from "@/lib/hermes-screener";
 import { extractTextFromCvFile } from "@/lib/cv-parser";
+import { verifyCvIdentity } from "@/lib/identity-verifier";
 import {
   classifyScreening,
   SCREENING_BANDS,
@@ -30,7 +31,7 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
   const { profile } = await requireProfile();
 
   const jobId = formData.get("job_id") as string;
-  const cvParsedName = (formData.get("cv_parsed_name") as string) || profile.full_name;
+  const cvParsedName = profile.full_name || (formData.get("cv_parsed_name") as string) || "Kandidat";
   let cvStoragePath = (formData.get("cv_storage_path") as string) || "";
   const cvFile = formData.get("cv_file") as File | null;
 
@@ -85,6 +86,53 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
 
   if (!cvStoragePath || cvStoragePath.trim() === "") {
     cvStoragePath = `cvs/${profile.id}/resume.pdf`;
+  }
+
+  // =========================================================================
+  // FAST ANTI-FRAUD GUARD: IDENTITY & NAME VERIFICATION (< 1ms execution)
+  // Ensures CV belongs to the logged-in candidate. Archives evidence to HRD database.
+  // =========================================================================
+  const identityCheck = verifyCvIdentity(profile.full_name, cvTextContent);
+
+  if (!identityCheck.isMatch) {
+    const rejectionReason = `Diskrepansi Identitas: Berkas CV teridentifikasi milik pihak lain dan tidak memuat nama akun pelamar (${profile.full_name}). Sesuai ketentuan integritas, proses seleksi dibatalkan otomatis dan pengajuan diblokir.`;
+
+    const fraudAnalysisJson = {
+      screening_outcome: "REJECTED_INTEGRITY_MISMATCH",
+      screening_label: "Dibatalkan: Ketidaksesuaian Identitas Dokumen",
+      status_kelayakan: "NOT_QUALIFIED",
+      match_fit_score: 0,
+      alasan_keputusan: rejectionReason,
+      fraud_flag: true,
+      flag_type: "IDENTITY_MISMATCH",
+      matched_tokens: identityCheck.matchedTokens,
+      missing_tokens: identityCheck.missingTokens,
+      audit_disclaimer: "Berkas CV telah tersimpan dan diarsipkan ke storage database HRD untuk keperluan rekam jejak integritas.",
+    };
+
+    // Insert blocked/rejected application record to database so HRD has the forensic evidence
+    await supabase.from("applications").insert({
+      candidate_id: profile.id,
+      job_id: jobId,
+      cv_storage_path: cvStoragePath,
+      cv_parsed_name: profile.full_name,
+      status: "rejected",
+      cv_score: 0,
+      cv_analysis_json: fraudAnalysisJson,
+    });
+
+    revalidatePath("/applications");
+    revalidatePath("/admin/dashboard");
+    revalidatePath("/admin/applications");
+
+    return {
+      success: false,
+      score: 0,
+      status: "rejected",
+      outcome: "rejected",
+      label: "Dibatalkan: Ketidaksesuaian Identitas Dokumen",
+      error: `Diskrepansi Identitas: Berkas CV telah tersimpan ke database HRD. Namun karena nama pada dokumen CV tidak cocok dengan akun profil Anda (${profile.full_name}), pengajuan lamaran otomatis dibatalkan dan diblokir demi integritas seleksi.`,
+    };
   }
 
   // 3. Fetch Job info for Langflow AI Context
