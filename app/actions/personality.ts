@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireProfile } from "@/lib/supabase/auth";
 import { PersonalityTestResult, Job } from "@/types/database";
 import { runHermesPsychometricAnalysis } from "@/lib/hermes-psychometric";
+import { sendRecruitmentEmail } from "@/lib/communication-engine";
 import {
   ALL_50_PSYCHOMETRIC_QUESTIONS,
   MBTI_ARCHETYPE_LOOKUP,
@@ -294,6 +295,16 @@ export async function submitPersonalityTestAction(
     console.error("Error saving multi-framework personality result:", updateError);
     return { success: false, error: updateError.message };
   }
+
+  // Communication Trigger: personality_completed (Non-blocking)
+  sendRecruitmentEmail({
+    eventType: "personality_completed",
+    applicationId,
+    candidate: profile,
+    job: app.job as any,
+  }).catch((err) =>
+    console.error("[CommEngine] personality_completed email error:", err)
+  );
 
   revalidatePath("/applications");
   revalidatePath(`/applications/${applicationId}/personality-test`);

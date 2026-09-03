@@ -16,6 +16,7 @@ import {
   evaluateInterviewSessionHermes,
 } from "@/lib/hermes-interview";
 import { normalizeSpeechTranscript } from "@/lib/speech-normalizer";
+import { sendRecruitmentEmail } from "@/lib/communication-engine";
 
 const FOLLOW_UPS_PER_COMPETENCY = 1;
 
@@ -363,6 +364,18 @@ export async function submitAnswerAndGetNextAction(
     .from("applications")
     .update(updatePayload)
     .eq("id", applicationId);
+
+  // Communication Trigger: interview_completed (Non-blocking)
+  if (isInterviewDone) {
+    sendRecruitmentEmail({
+      eventType: "interview_completed",
+      applicationId,
+      candidate: profile,
+      job: jobData as any,
+    }).catch((err) =>
+      console.error("[CommEngine] interview_completed email error:", err)
+    );
+  }
 
   revalidatePath("/applications");
   revalidatePath(`/applications/${applicationId}/interview`);

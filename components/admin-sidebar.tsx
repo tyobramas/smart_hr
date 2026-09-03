@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   Sparkles,
   ShieldCheck,
+  Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,12 @@ export function AdminSidebar() {
       href: "/admin/applications",
       icon: Users,
       exact: true,
+    },
+    {
+      name: "Log Komunikasi",
+      href: "/admin/communications",
+      icon: Mail,
+      exact: false,
     },
   ];
 

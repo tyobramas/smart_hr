@@ -11,6 +11,8 @@ import {
   SCREENING_BANDS,
   ScreeningOutcome,
 } from "@/lib/screening-bands";
+import { sendRecruitmentEmail } from "@/lib/communication-engine";
+import { CommunicationEventType } from "@/types/database";
 
 export interface ApplyJobResult {
   success: boolean;
@@ -154,6 +156,38 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
     return { success: false, error: insertErr.message };
   }
 
+  // 6. Proactive Candidate Communication (Asynchronous / Non-blocking)
+  if (insertedApp?.id) {
+    const createdAppId = insertedApp.id;
+
+    // Trigger EVT_APPLICATION_RECEIVED
+    sendRecruitmentEmail({
+      eventType: "application_received",
+      applicationId: createdAppId,
+      candidate: profile,
+      job: jobData as any,
+    }).catch((err) =>
+      console.error("[CommEngine] application_received email error:", err)
+    );
+
+    // Trigger Screening Outcome Email
+    let outcomeEventType: CommunicationEventType = "screening_review";
+    if (decision.outcome === "passed" || decision.status === "screened") {
+      outcomeEventType = "screening_passed";
+    } else if (decision.outcome === "rejected" || decision.status === "rejected") {
+      outcomeEventType = "screening_rejected";
+    }
+
+    sendRecruitmentEmail({
+      eventType: outcomeEventType,
+      applicationId: createdAppId,
+      candidate: profile,
+      job: jobData as any,
+    }).catch((err) =>
+      console.error(`[CommEngine] ${outcomeEventType} email error:`, err)
+    );
+  }
+
   revalidatePath("/applications");
   revalidatePath("/admin/dashboard");
   revalidatePath("/admin/applications");
@@ -293,6 +327,23 @@ export async function updateApplicationStatusAction(
 
   if (error) {
     return { error: error.message };
+  }
+
+  // Communication Trigger for status transitions
+  if (status === "invited_interview") {
+    sendRecruitmentEmail({
+      eventType: "interview_invitation",
+      applicationId,
+    }).catch((err) =>
+      console.error("[CommEngine] interview_invitation trigger error:", err)
+    );
+  } else if (status === "rejected") {
+    sendRecruitmentEmail({
+      eventType: "final_rejection",
+      applicationId,
+    }).catch((err) =>
+      console.error("[CommEngine] final_rejection trigger error:", err)
+    );
   }
 
   revalidatePath("/admin/dashboard");

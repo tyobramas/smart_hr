@@ -191,3 +191,39 @@ export interface Application {
   job?: Job;
   candidate?: Profile;
 }
+
+export type CommunicationEventType =
+  | 'application_received'
+  | 'screening_passed'
+  | 'screening_rejected'
+  | 'screening_review'
+  | 'personality_reminder'
+  | 'personality_completed'
+  | 'interview_invitation'
+  | 'interview_reminder_48h'
+  | 'interview_reminder_24h'
+  | 'interview_completed'
+  | 'interview_expired'
+  | 'final_rejection';
+
+export type CommunicationStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'opened';
+
+export interface CommunicationLog {
+  id: string;
+  application_id: string;
+  candidate_id: string;
+  job_id: string;
+  event_type: CommunicationEventType;
+  email_to: string;
+  email_subject: string;
+  email_body_html: string;
+  email_body_text: string | null;
+  status: CommunicationStatus;
+  hermes_model: string | null;
+  hermes_duration_ms: number | null;
+  provider_message_id: string | null;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
