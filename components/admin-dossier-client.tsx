@@ -366,6 +366,8 @@ export function AdminDossierClient({ app }: AdminDossierClientProps) {
                 cvScore={app.cv_score ?? 75}
                 minScore={minScore}
                 mbtiType={personality?.mbti_type || "INTJ"}
+                interviewScore={interviewEval?.skor_kompetensi}
+                interviewRecommendation={interviewEval?.rekomendasi_keputusan}
               />
             )}
 

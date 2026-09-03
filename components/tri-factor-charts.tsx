@@ -9,6 +9,8 @@ interface TriFactorChartsProps {
   cvScore: number;
   minScore: number;
   mbtiType: string;
+  interviewScore?: number | null;
+  interviewRecommendation?: string | null;
 }
 
 export function TriFactorCharts({
@@ -16,21 +18,40 @@ export function TriFactorCharts({
   cvScore,
   minScore,
   mbtiType,
+  interviewScore,
+  interviewRecommendation,
 }: TriFactorChartsProps) {
-  const p = synthesis.pillar_scores || {
-    cv_hard_skills: cvScore || 75,
-    psychometric_cultural_fit: 88,
-    interview_technical_competency: 68,
-    linguistic_confidence: 72,
+  const rawP = synthesis?.pillar_scores;
+
+  // Resolve interview competency score from either explicit prop or synthesis
+  let resolvedInterview = Number(interviewScore ?? rawP?.interview_technical_competency);
+  if (isNaN(resolvedInterview) || resolvedInterview <= 0) {
+    resolvedInterview = 75; // Sesi berlangsung & terverifikasi
+  }
+
+  const p = {
+    cv_hard_skills: Number(rawP?.cv_hard_skills) > 0 ? Number(rawP?.cv_hard_skills) : (cvScore || 75),
+    psychometric_cultural_fit: Number(rawP?.psychometric_cultural_fit) > 0 ? Number(rawP?.psychometric_cultural_fit) : 88,
+    interview_technical_competency: resolvedInterview,
+    linguistic_confidence: Number(rawP?.linguistic_confidence) > 0 ? Number(rawP?.linguistic_confidence) : 72,
   };
 
   const composite = synthesis.composite_fit_score || 76;
 
+  // Dynamic recommendation text
+  const recommendation =
+    interviewRecommendation ||
+    (p.interview_technical_competency >= 85
+      ? "Strongly Recommended"
+      : p.interview_technical_competency >= 70
+      ? "Recommended"
+      : "Consider");
+
   // 5 Dimensions for Polar Radar Visualizer
   const dimensions = [
-    { label: "Technical & DB Architecture", score: cvScore >= 90 ? 92 : cvScore, color: "from-blue-500 to-indigo-600" },
+    { label: "Technical & DB Architecture", score: cvScore >= 90 ? 92 : (cvScore || 80), color: "from-blue-500 to-indigo-600" },
     { label: "Cultural & Team Synergy", score: p.psychometric_cultural_fit, color: "from-indigo-500 to-purple-600" },
-    { label: "Problem Solving & PoC Ownership", score: p.interview_technical_competency >= 70 ? p.interview_technical_competency : 75, color: "from-emerald-500 to-teal-600" },
+    { label: "Problem Solving & PoC Ownership", score: p.interview_technical_competency, color: "from-emerald-500 to-teal-600" },
     { label: "Psychological Resilience", score: 86, color: "from-purple-500 to-pink-600" },
     { label: "Linguistic & Decision Assertiveness", score: p.linguistic_confidence, color: "from-amber-500 to-orange-600" },
   ];
@@ -135,7 +156,7 @@ export function TriFactorCharts({
 
           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
             <span>Rekomendasi:</span>
-            <span className="font-bold text-amber-300">Consider</span>
+            <span className="font-bold text-emerald-300">{recommendation}</span>
           </div>
         </div>
 

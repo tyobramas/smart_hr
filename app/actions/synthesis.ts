@@ -28,8 +28,12 @@ export async function getOrGenerateTriFactorSynthesisAction(applicationId: strin
   }
 
   const existingSynthesis = (app.personality_result_json as any)?.tri_factor_synthesis as TriFactorSynthesis | null;
+  const interviewEval = (app.interview_transcript_json as any)?.overall_evaluation;
+  const hasFreshInterviewData = !!interviewEval?.skor_kompetensi && Number(interviewEval.skor_kompetensi) > 0;
+  const isSynthesisInterviewZero = !existingSynthesis?.pillar_scores?.interview_technical_competency || Number(existingSynthesis.pillar_scores.interview_technical_competency) <= 0;
 
-  if (existingSynthesis && !forceReanalyze) {
+  // If existing synthesis had 0 for interview but candidate now completed interview, auto-regenerate
+  if (existingSynthesis && !forceReanalyze && !(isSynthesisInterviewZero && hasFreshInterviewData)) {
     return {
       success: true,
       synthesis: existingSynthesis,
