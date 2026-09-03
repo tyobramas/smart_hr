@@ -1,5 +1,9 @@
 # SmartHR — AI-Powered Recruitment & Talent Platform
 
+<p align="left">
+  <b>English</b> | <a href="README.id.md">Bahasa Indonesia</a>
+</p>
+
 An intelligent recruitment and talent management platform built with **Next.js 15 (App Router, TypeScript)**, **Supabase (PostgreSQL & Auth)**, **Tailwind CSS**, and an autonomous **Hermes AI Agent** runtime.
 
 ---
