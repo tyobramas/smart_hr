@@ -31,6 +31,7 @@ import {
   Cpu,
   Target,
   Zap,
+  ShieldAlert,
 } from "lucide-react";
 
 interface ApplyFormProps {
@@ -636,23 +637,29 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
             className="hidden"
           />
 
-          {/* Full Name */}
+          {/* Full Name (Locked to Registered Profile Identity) */}
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Nama Lengkap Kandidat
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Nama Lengkap Kandidat
+              </label>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                <span>Identitas Akun Terverifikasi</span>
+              </span>
+            </div>
             <div className="relative">
               <Input
                 type="text"
                 name="cv_parsed_name"
-                defaultValue={profile.full_name}
-                required
-                className="pl-9 rounded-xl border-slate-200"
+                value={profile.full_name}
+                readOnly
+                className="pl-9 rounded-xl border-slate-200 bg-slate-50 text-slate-700 font-semibold cursor-not-allowed select-none"
               />
               <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Nama resmi yang tercatat pada berkas kualifikasi.
+            <p className="text-[11px] text-slate-500 mt-1">
+              Nama terkunci sesuai akun terdaftar. Berkas CV yang diunggah wajib mencantumkan nama yang sama.
             </p>
           </div>
 
@@ -722,6 +729,17 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Integrity & Anti-Fraud Disclaimer Box */}
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 space-y-1.5 shadow-2xs">
+            <div className="flex items-center gap-2 font-bold text-amber-950">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Disclaimer Integritas & Audit Berkas HRD</span>
+            </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Berkas CV yang Anda unggah akan otomatis diarsipkan ke database HRD untuk keperluan rekam jejak. Jika sistem mendeteksi ketidaksesuaian identitas antara nama akun profil Anda dan dokumen CV, atau ditemukan indikasi kecurangan, sistem akan secara otomatis membatalkan proses lamaran dan memblokir pengajuan Anda.
+            </p>
           </div>
 
           <div className="pt-2">

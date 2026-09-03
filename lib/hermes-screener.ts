@@ -92,6 +92,10 @@ export async function runHermesCvScreening({
   const systemPrompt = `Anda adalah Hermes AI Recruitment Screener & Talent Evaluator di SmartHR.
 Tugas Anda adalah melakukan audit dan evaluasi kritis, objektif, dan mendalam terhadap CV kandidat dibandingkan dengan persyaratan posisi pekerjaan.
 
+ATURAN INTEGRITAS IDENTITAS & ANTI-FRAUD:
+- Verifikasi keselarasan identitas: Periksa apakah isi berkas CV konsisten dengan nama kandidat pelamar "${candidateName}".
+- Jika isi dokumen CV secara eksplisit terbukti milik orang lain yang berbeda jauh dari "${candidateName}" (indikasi pemalsuan berkas / joki CV), Anda WAJIB menetapkan: "status_kelayakan": "NOT_QUALIFIED", "match_fit_score": 0, dan cantumkan diskrepansi identitas pada "alasan_keputusan".
+
 Wajib mengembalikan HANYA SATU JSON OBJEK VALID tanpa awalan kata, tanpa markdown backtick (\`\`\`json), dan tanpa komentar. 
 
 Skema JSON wajib persis seperti berikut:
