@@ -1,5 +1,5 @@
 import { runHermesAgent } from "./hermes-runner";
-import { CommunicationEventType } from "@/types/database";
+import { CommunicationEventType, CommunicationContext } from "@/types/database";
 
 export interface EmailContent {
   subject: string;
@@ -15,34 +15,24 @@ export interface EmailContent {
 
 export type GeneratedEmailResult = EmailContent;
 
-export interface EmailContext {
-  candidateName: string;
-  candidateFirstName: string;
-  jobTitle: string;
-  jobLocation?: string;
-  applicationId: string;
-  applicationDate?: string;
-  interviewDeadline?: string;
-  appBaseUrl?: string;
-  actionUrl?: string;
-}
+export type EmailContext = CommunicationContext;
+export type { CommunicationContext };
 
-export type CommunicationContext = EmailContext;
-
-function resolveDefaultActionUrl(eventType: CommunicationEventType, applicationId: string, baseUrl: string): string {
-  const cleanBase = baseUrl.replace(/\/+$/, "");
+function resolveDefaultActionUrl(eventType: CommunicationEventType, applicationId?: string, baseUrl?: string): string {
+  const cleanBase = (baseUrl || "https://smarthr.my.id").replace(/\/+$/, "");
+  const appId = applicationId || "test-app-uuid-12345";
   switch (eventType) {
     case "screening_passed":
     case "personality_reminder":
-      return `${cleanBase}/applications/${applicationId}/personality-test`;
+      return `${cleanBase}/applications/${appId}/personality-test`;
 
     case "interview_invitation":
     case "interview_reminder_48h":
     case "interview_reminder_24h":
-      return `${cleanBase}/applications/${applicationId}/interview`;
+      return `${cleanBase}/applications/${appId}/interview`;
 
     default:
-      return `${cleanBase}/applications/${applicationId}`;
+      return `${cleanBase}/applications/${appId}`;
   }
 }
 
@@ -507,10 +497,11 @@ function cleanWhatsAppText(raw: string): string {
 /**
  * Clean fallback plain-text templates for WhatsApp notifications without any HTML tags.
  */
-function getWhatsAppFallbackContent(eventType: CommunicationEventType, ctx: EmailContext): string {
+function getWhatsAppFallbackContent(eventType: CommunicationEventType, ctx: CommunicationContext): string {
   const baseUrl = ctx.appBaseUrl || "https://smarthr.my.id";
-  const actionUrl = ctx.actionUrl || resolveDefaultActionUrl(eventType, ctx.applicationId, baseUrl);
-  const name = ctx.candidateFirstName;
+  const appId = ctx.applicationId || "test-app-uuid-12345";
+  const actionUrl = ctx.actionUrl || resolveDefaultActionUrl(eventType, appId, baseUrl);
+  const name = ctx.candidateFirstName || ctx.candidateName.trim().split(/\s+/)[0] || "Kandidat";
   const job = ctx.jobTitle;
 
   switch (eventType) {
@@ -569,11 +560,13 @@ export async function generateWhatsAppContent(
   hermes_error?: string | null;
 }> {
   const startTime = Date.now();
+  const firstName = context.candidateFirstName || context.candidateName.trim().split(/\s+/)[0] || "Kandidat";
+  const appId = context.applicationId || "test-app-uuid-12345";
   const baseUrl = (context.appBaseUrl || process.env.APP_BASE_URL || "https://smarthr.my.id").replace(/\/+$/, "");
-  const actionUrl = context.actionUrl || resolveDefaultActionUrl(eventType, context.applicationId, baseUrl);
+  const actionUrl = context.actionUrl || resolveDefaultActionUrl(eventType, appId, baseUrl);
 
   const waPrompt = `Anda adalah Asisten Rekrutmen SmartHR yang bertugas menyusun pesan notifikasi WhatsApp resmi, ramah, dan profesional untuk kandidat.
-KANDIDAT: ${context.candidateName} (panggilan: ${context.candidateFirstName})
+KANDIDAT: ${context.candidateName} (panggilan: ${firstName})
 POSISI: ${context.jobTitle}${context.jobLocation ? ` (${context.jobLocation})` : ""}
 TAHAPAN / EVENT: ${eventType}
 ACTION_URL: ${actionUrl}
