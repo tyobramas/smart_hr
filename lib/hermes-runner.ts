@@ -59,7 +59,8 @@ function execSshHermes(
       sshArgs.push("-i", keyPath);
     }
 
-    sshArgs.push(`${vpsUser}@${vpsHost}`, 'hermes -z "$(cat)"');
+    const modelToUse = process.env.HERMES_MODEL || "agnes-2.5-flash";
+    sshArgs.push(`${vpsUser}@${vpsHost}`, `hermes -m "${modelToUse}" -z "$(cat)"`);
 
     const child = spawn("ssh", sshArgs, {
       timeout: effectiveTimeout,
@@ -151,9 +152,10 @@ async function callHermesCli(
     PATH: `${process.env.HOME || ""}/.local/bin:${process.env.HOME || ""}/.hermes/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
   };
 
+  const modelToUse = process.env.HERMES_MODEL || "agnes-2.5-flash";
   const { stdout, stderr } = await execFileAsync(
     selectedCli,
-    ["-z", combinedPrompt],
+    ["-m", modelToUse, "-z", combinedPrompt],
     {
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
@@ -190,17 +192,17 @@ async function callHermesApi(
     params.modelOverride ||
     process.env.HERMES_MODEL ||
     process.env.NARA_ROUTER_MODEL ||
-    "mistral-medium-3-5";
+    "agnes-2.5-flash";
 
   const candidateModels = Array.from(
     new Set([
       primaryModel,
-      "mistral-medium-3-5",
-      "qwen3.8-flash-free",
-      "qwen3.7-flash",
+      "agnes-2.5-flash",
       "agnes-2.0-flash",
+      "qwen3.7-flash",
+      "qwen3.8-flash-free",
       "stepfun-3.7-flash",
-      "glm-5.3-flash-free",
+      "mistral-medium-3-5",
     ])
   );
 
@@ -280,8 +282,10 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
   // Mode 1: Try CLI first if mode is 'cli'
   if (mode === "cli") {
     try {
-      const vpsHost = process.env.HERMES_VPS_HOST || "103.30.146.87";
-      console.log(`\n\x1b[1m\x1b[35m[HERMES ROUTE: CLI / VPS]\x1b[0m 🖥️  Mengeksekusi melalui \x1b[32mHermes Agent Framework CLI (VPS: ${vpsHost})\x1b[0m...`);
+      const isVps = !!process.env.HERMES_VPS_HOST && (!process.env.HERMES_TARGET || process.env.HERMES_TARGET === "vps");
+      const targetLabel = isVps ? `VPS: ${process.env.HERMES_VPS_HOST || "103.30.146.87"}` : "Local Machine";
+      const routeType = isVps ? "CLI / VPS" : "CLI / LOCAL";
+      console.log(`\n\x1b[1m\x1b[35m[HERMES ROUTE: ${routeType}]\x1b[0m 🖥️  Mengeksekusi melalui \x1b[32mHermes Agent Framework CLI (${targetLabel})\x1b[0m...`);
       
       const userText = params.userPrompt || params.userMessage || "";
       const combinedPrompt = params.systemPrompt
@@ -292,16 +296,16 @@ export async function runHermesAgent(params: HermesCallParams): Promise<HermesCa
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
 
       if (output && output.trim().length > 0) {
-        console.log(`\x1b[1m\x1b[32m[HERMES ROUTE: CLI / VPS]\x1b[0m ✅ SUKSES dieksekusi oleh \x1b[32mHermes Agent CLI\x1b[0m (Durasi: ${elapsed}s | Source: \x1b[33m"cli"\x1b[0m)\n`);
+        console.log(`\x1b[1m\x1b[32m[HERMES ROUTE: ${routeType}]\x1b[0m ✅ SUKSES dieksekusi oleh \x1b[32mHermes Agent CLI\x1b[0m (Durasi: ${elapsed}s | Source: \x1b[33m"cli"\x1b[0m)\n`);
         return {
           success: true,
           content: output,
           source: "cli",
-          modelUsed: `Hermes Agent CLI (VPS ${vpsHost})`,
+          modelUsed: `Hermes Agent CLI (${targetLabel})`,
         };
       }
     } catch (cliErr: any) {
-      console.warn(`\x1b[1m\x1b[33m[HERMES ROUTE: FAILOVER]\x1b[0m ⚠️  Hermes CLI VPS gagal/timeout (${cliErr?.message || cliErr}) -> Beralih ke \x1b[36mFallback Direct API Router\x1b[0m...`);
+      console.warn(`\x1b[1m\x1b[33m[HERMES ROUTE: FAILOVER]\x1b[0m ⚠️  Hermes CLI gagal/timeout (${cliErr?.message || cliErr}) -> Beralih ke \x1b[36mFallback Direct API Router\x1b[0m...`);
     }
   }
 

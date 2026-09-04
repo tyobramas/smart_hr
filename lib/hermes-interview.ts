@@ -417,7 +417,7 @@ ${params.lastAnswer}
     userPrompt,
     temperature: 0.25,
     maxTokens: 700,
-    timeoutMs: 28000,
+    timeoutMs: 60000,
   });
 
   if (!res.success || !res.content) {
