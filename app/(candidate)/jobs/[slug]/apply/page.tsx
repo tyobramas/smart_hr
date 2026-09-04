@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireProfile } from "@/lib/supabase/auth";
 import { Job, Application } from "@/types/database";
 import { ApplyForm } from "@/components/apply-form";
+import { ApplicationTimeline } from "@/components/application-timeline";
 import { formatDate } from "@/lib/utils";
 import {
   CheckCircle2,
@@ -352,6 +353,26 @@ export default async function JobApplyPage({
               </div>
             </div>
           )}
+
+          {/* ========================================================= */}
+          {/* SECTION 4.5: RECRUITMENT TIMELINE & STAGE PROGRESS */}
+          {/* ========================================================= */}
+          <div className="pt-6 border-t border-slate-100">
+            <ApplicationTimeline
+              data={{
+                applicationId: app.id,
+                createdAt: app.created_at,
+                status: app.status,
+                score: score,
+                minScoreThreshold: threshold,
+                personalityCompletedAt: app.personality_completed_at,
+                interviewCompletedAt: app.interview_completed_at,
+                interviewStartedAt: app.interview_started_at,
+                jobTitle: jobData.title,
+                jobSlug: jobData.slug,
+              }}
+            />
+          </div>
 
           {/* ========================================================= */}
           {/* SECTION 5: ACTION CTAS */}

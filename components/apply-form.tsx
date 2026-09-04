@@ -4,6 +4,7 @@ import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { applyJobAction, ApplyJobResult } from "@/app/actions/applications";
 import { Job, Profile } from "@/types/database";
+import { ApplicationTimeline } from "@/components/application-timeline";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
@@ -550,6 +551,23 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
               </div>
             </div>
           )}
+
+          {/* ========================================================= */}
+          {/* SECTION 4.5: RECRUITMENT TIMELINE & STAGE PROGRESS */}
+          {/* ========================================================= */}
+          <div className="pt-4 border-t border-slate-100">
+            <ApplicationTimeline
+              data={{
+                applicationId: screeningResult.applicationId,
+                createdAt: new Date().toISOString(),
+                status: screeningResult.status || (isPassed ? "screened" : "rejected"),
+                score: score,
+                minScoreThreshold: threshold,
+                jobTitle: job.title,
+                jobSlug: job.slug,
+              }}
+            />
+          </div>
 
           {/* ========================================================= */}
           {/* SECTION 5: ACTION BUTTONS */}

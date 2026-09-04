@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Application, Job } from "@/types/database";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { ApplicationTimeline } from "@/components/application-timeline";
 import { formatDate } from "@/lib/utils";
 import {
   Calendar,
@@ -26,6 +27,7 @@ interface CandidateApplicationRowProps {
 
 export function CandidateApplicationRow({ app }: CandidateApplicationRowProps) {
   const [showDetails, setShowDetails] = useState(false);
+  const [activeTab, setActiveTab] = useState<"timeline" | "evaluation">("timeline");
   const evaluation = (app.cv_analysis_json as any)?.evaluation || null;
   const personality = (app.personality_result_json as any) || null;
   const isPersonalityCompleted = !!app.personality_completed_at || !!personality;
@@ -140,20 +142,21 @@ export function CandidateApplicationRow({ app }: CandidateApplicationRowProps) {
               </span>
             )}
 
-            {evaluation && (
-              <button
-                type="button"
-                onClick={() => setShowDetails(!showDetails)}
-                title="Lihat Detail Analisis AI"
-                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md border border-slate-200 transition-colors"
-              >
-                {showDetails ? (
-                  <ChevronUp className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                )}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowDetails(!showDetails)}
+              title="Lihat Timeline & Detail Lamaran"
+              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md border border-slate-200 transition-colors inline-flex items-center gap-1"
+            >
+              <span className="text-[11px] font-semibold hidden sm:inline text-slate-600">
+                {showDetails ? "Tutup" : "Timeline"}
+              </span>
+              {showDetails ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
           </div>
         </td>
 
@@ -210,24 +213,76 @@ export function CandidateApplicationRow({ app }: CandidateApplicationRowProps) {
         </td>
       </tr>
 
-      {/* Expanded AI Analysis Breakdown */}
-      {showDetails && evaluation && (
+      {/* Expanded Selection Timeline & AI Evaluation Breakdown */}
+      {showDetails && (
         <tr className="bg-slate-50/80 border-b border-slate-200">
           <td colSpan={6} className="p-4 px-6">
-            <div className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
-                  <Sparkles className="w-4 h-4 text-blue-600" />
-                  <span>Rincian Evaluasi Kompetensi Dokumen</span>
+            <div className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm space-y-5">
+              {/* Header with Tab Navigation */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("timeline")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      activeTab === "timeline"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-slate-600 hover:bg-slate-100 border border-slate-200"
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Timeline & Progres Seleksi</span>
+                  </button>
+
+                  {evaluation && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("evaluation")}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        activeTab === "evaluation"
+                          ? "bg-blue-600 text-white shadow-xs"
+                          : "text-slate-600 hover:bg-slate-100 border border-slate-200"
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Rincian Evaluasi Dokumen AI</span>
+                    </button>
+                  )}
                 </div>
+
                 <button
                   type="button"
                   onClick={() => setShowDetails(false)}
-                  className="text-xs text-slate-400 hover:text-slate-600"
+                  className="text-xs text-slate-400 hover:text-slate-600 self-end sm:self-auto"
                 >
                   Tutup Rincian
                 </button>
               </div>
+
+              {/* TAB 1: SELECTION TIMELINE */}
+              {activeTab === "timeline" && (
+                <div className="pt-1">
+                  <ApplicationTimeline
+                    data={{
+                      applicationId: app.id,
+                      createdAt: app.created_at,
+                      status: app.status,
+                      score: app.cv_score,
+                      minScoreThreshold: app.job?.min_score_threshold,
+                      personalityCompletedAt: app.personality_completed_at,
+                      interviewCompletedAt: app.interview_completed_at,
+                      interviewStartedAt: app.interview_started_at,
+                      jobTitle: app.job?.title,
+                      jobSlug: app.job?.slug,
+                    }}
+                    showHeader={false}
+                  />
+                </div>
+              )}
+
+              {/* TAB 2: AI EVALUATION DETAILS */}
+              {activeTab === "evaluation" && evaluation && (
+                <div className="space-y-4">
 
               {/* Alasan Keputusan */}
               {evaluation.alasan_keputusan && (
@@ -311,6 +366,8 @@ export function CandidateApplicationRow({ app }: CandidateApplicationRowProps) {
                   >
                     Buka Hasil Tes
                   </Link>
+                </div>
+              )}
                 </div>
               )}
             </div>
