@@ -208,13 +208,30 @@ export type CommunicationEventType =
 
 export type CommunicationStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'opened';
 
+export type CommunicationChannel = 'email' | 'whatsapp';
+
+export interface CommunicationContext {
+  candidateName: string;
+  candidateFirstName?: string;
+  jobTitle: string;
+  jobLocation?: string;
+  companyName?: string;
+  applicationId?: string;
+  applicationDate?: string;
+  interviewDeadline?: string;
+  appBaseUrl?: string;
+  actionUrl?: string;
+}
+
 export interface CommunicationLog {
   id: string;
   application_id: string;
   candidate_id: string;
   job_id: string;
   event_type: CommunicationEventType;
+  channel: CommunicationChannel;
   email_to: string;
+  phone_to: string | null;
   email_subject: string;
   email_body_html: string;
   email_body_text: string | null;
