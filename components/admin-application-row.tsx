@@ -17,6 +17,7 @@ import {
   Minus,
   Sparkles,
   ArrowUpRight,
+  MessageCircle,
 } from "lucide-react";
 
 interface AdminApplicationRowProps {
@@ -90,6 +91,21 @@ export function AdminApplicationRow({ app }: AdminApplicationRowProps) {
                 <span>Lihat CV</span>
                 <ExternalLink className="w-2.5 h-2.5 opacity-70" />
               </a>
+              {(app.phone || app.candidate?.phone) && (
+                <>
+                  <span className="text-slate-300">&bull;</span>
+                  <a
+                    href={`https://wa.me/${(app.phone || app.candidate?.phone || "").replace(/[^0-9]/g, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 transition-colors"
+                    title="Hubungi via WhatsApp"
+                  >
+                    <MessageCircle className="w-3 h-3 text-emerald-500" />
+                    <span>{app.phone || app.candidate?.phone}</span>
+                  </a>
+                </>
+              )}
             </div>
           </div>
         </div>

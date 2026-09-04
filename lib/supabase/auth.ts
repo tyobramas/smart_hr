@@ -37,7 +37,12 @@ export async function getCurrentProfile(): Promise<Profile | null> {
     return null;
   }
 
-  return data as Profile;
+  const profile = data as Profile;
+  if (!profile.phone && (user.user_metadata?.phone || (user as any).phone)) {
+    profile.phone = user.user_metadata?.phone || (user as any).phone;
+  }
+
+  return profile;
 }
 
 /**

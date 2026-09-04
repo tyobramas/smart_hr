@@ -1,5 +1,5 @@
 import { createAdminClient } from "./supabase/server";
-import { generateEmailContent, EmailContext } from "./hermes-communicator";
+import { generateEmailContent, generateWhatsAppContent, EmailContext } from "./hermes-communicator";
 import { sendEmail } from "./email-transport";
 import { CommunicationEventType, Application, Job, Profile } from "@/types/database";
 
@@ -130,6 +130,7 @@ async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
   emailTo: string;
   candidateId: string;
   jobId: string;
+  candidatePhone?: string | null;
 } | null> {
   const supabase = createAdminClient();
 
@@ -204,6 +205,7 @@ async function assembleContext(params: SendRecruitmentEmailParams): Promise<{
     emailTo,
     candidateId: candidate.id,
     jobId: job.id,
+    candidatePhone: (app as any).phone || candidate.phone || null,
   };
 }
 
@@ -230,7 +232,7 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
       };
     }
 
-    const { context, emailTo, candidateId, jobId } = assembled;
+    const { context, emailTo, candidateId, jobId, candidatePhone } = assembled;
 
     // 1. Eligibility check
     const eligibility = await checkCommunicationEligibility(applicationId, candidateId, eventType);
@@ -245,6 +247,16 @@ export async function sendRecruitmentEmail(params: SendRecruitmentEmailParams): 
 
     // 2. Content generation with Hermes
     const generated = await generateEmailContent(eventType, context);
+
+    // 2b. WhatsApp notification preparation if candidate phone exists
+    if (candidatePhone) {
+      try {
+        const waResult = await generateWhatsAppContent(eventType, context);
+        console.log(`[CommEngine:WhatsApp] Message dispatched/ready for ${candidatePhone} (${eventType})`);
+      } catch (waErr) {
+        console.warn("[CommEngine:WhatsApp] Error generating WhatsApp content:", waErr);
+      }
+    }
 
     let hermesErrorMessage: string | null = null;
     if (generated.hermes_error) {

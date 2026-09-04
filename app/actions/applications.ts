@@ -15,6 +15,7 @@ import {
 } from "@/lib/screening-bands";
 import { sendRecruitmentEmail } from "@/lib/communication-engine";
 import { CommunicationEventType } from "@/types/database";
+import { validateWhatsAppPhone } from "@/lib/phone-utils";
 
 export interface ApplyJobResult {
   success: boolean;
@@ -35,9 +36,28 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
   const cvParsedName = profile.full_name || (formData.get("cv_parsed_name") as string) || "Kandidat";
   let cvStoragePath = (formData.get("cv_storage_path") as string) || "";
   const cvFile = formData.get("cv_file") as File | null;
+  const rawPhone = (formData.get("phone") as string)?.trim();
 
   if (!jobId) {
     return { success: false, error: "Job ID tidak valid." };
+  }
+
+  // Validate candidate WhatsApp phone number
+  let candidatePhone = profile.phone || "";
+  if (rawPhone) {
+    const phoneVal = validateWhatsAppPhone(rawPhone);
+    if (!phoneVal.isValid) {
+      return {
+        success: false,
+        error: phoneVal.error || "Format nomor WhatsApp tidak valid. Gunakan format contoh: 0812-3456-7890.",
+      };
+    }
+    candidatePhone = phoneVal.normalized;
+  } else if (!candidatePhone) {
+    return {
+      success: false,
+      error: "Nomor WhatsApp wajib diisi untuk pengiriman notifikasi tahapan seleksi.",
+    };
   }
 
   const supabase = await createClient();
@@ -186,20 +206,50 @@ export async function applyJobAction(formData: FormData): Promise<ApplyJobResult
     cv_text_length: cvTextContent.trim().length,
   };
 
+  // Sync phone to profile if updated
+  if (candidatePhone && candidatePhone !== profile.phone) {
+    try {
+      await supabase.from("profiles").update({ phone: candidatePhone }).eq("id", profile.id);
+    } catch (err) {
+      console.warn("Could not sync phone to profile:", err);
+    }
+    try {
+      await supabase.auth.updateUser({
+        data: { phone: candidatePhone },
+      });
+    } catch (err) {
+      // non-fatal
+    }
+  }
+
   // 5. Insert Application with Hermes Output directly into Database
-  const { data: insertedApp, error: insertErr } = await supabase
+  const appPayload: Record<string, any> = {
+    candidate_id: profile.id,
+    job_id: jobId,
+    cv_storage_path: cvStoragePath,
+    cv_parsed_name: cvParsedName,
+    status: decision.status,
+    cv_score: initialScore,
+    cv_analysis_json: analysisJson,
+    phone: candidatePhone || null,
+  };
+
+  let { data: insertedApp, error: insertErr } = await supabase
     .from("applications")
-    .insert({
-      candidate_id: profile.id,
-      job_id: jobId,
-      cv_storage_path: cvStoragePath,
-      cv_parsed_name: cvParsedName,
-      status: decision.status,
-      cv_score: initialScore,
-      cv_analysis_json: analysisJson,
-    })
+    .insert(appPayload)
     .select("id")
     .single();
+
+  if (insertErr && insertErr.message?.includes("phone")) {
+    delete appPayload.phone;
+    const fallback = await supabase
+      .from("applications")
+      .insert(appPayload)
+      .select("id")
+      .single();
+    insertedApp = fallback.data;
+    insertErr = fallback.error;
+  }
 
   if (insertErr) {
     return { success: false, error: insertErr.message };

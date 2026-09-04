@@ -33,7 +33,10 @@ import {
   Target,
   Zap,
   ShieldAlert,
+  Phone,
+  MessageCircle,
 } from "lucide-react";
+import { validateWhatsAppPhone } from "@/lib/phone-utils";
 
 interface ApplyFormProps {
   job: Job;
@@ -48,6 +51,12 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
   const [screeningResult, setScreeningResult] = useState<ApplyJobResult | null>(null);
   const [activeStep, setActiveStep] = useState(1);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Phone state with validation for WhatsApp notifications
+  const [phone, setPhone] = useState(profile.phone || "");
+  const [phoneTouched, setPhoneTouched] = useState(!!profile.phone);
+  const phoneValidation = validateWhatsAppPhone(phone);
+  const isPhoneValid = phone.trim().length > 0 && phoneValidation.isValid;
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files && e.target.files[0]) {
@@ -105,6 +114,16 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
     if (!selectedFile) {
       setErrorMessage("Silakan pilih atau upload dokumen CV Anda terlebih dahulu.");
       toast.error("Silakan pilih dokumen CV Anda.");
+      return;
+    }
+
+    setPhoneTouched(true);
+    if (!phoneValidation.isValid) {
+      setErrorMessage(
+        phoneValidation.error ||
+          "Format nomor WhatsApp tidak valid. Masukkan nomor WhatsApp yang benar (contoh: 0812-3456-7890 atau +6281234567890)."
+      );
+      toast.error("Format nomor WhatsApp tidak valid.");
       return;
     }
 
@@ -679,6 +698,66 @@ export function ApplyForm({ job, profile }: ApplyFormProps) {
             <p className="text-[11px] text-slate-500 mt-1">
               Nama terkunci sesuai akun terdaftar. Berkas CV yang diunggah wajib mencantumkan nama yang sama.
             </p>
+          </div>
+
+          {/* WhatsApp Phone Number for Instant Selection Notifications */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Nomor WhatsApp Notifikasi Seleksi <span className="text-rose-500">*</span>
+              </label>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                <MessageCircle className="w-3 h-3 text-emerald-600" />
+                <span>Notifikasi WhatsApp Aktif</span>
+              </span>
+            </div>
+            <div className="relative">
+              <Input
+                type="tel"
+                name="phone"
+                required
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  if (!phoneTouched) setPhoneTouched(true);
+                }}
+                onBlur={() => setPhoneTouched(true)}
+                placeholder="Contoh: 0812-3456-7890 atau +6281234567890"
+                className={`pl-9 pr-9 rounded-xl transition-colors ${
+                  phoneTouched && phone.length > 0
+                    ? isPhoneValid
+                      ? "border-emerald-500 focus-visible:ring-emerald-500"
+                      : "border-rose-400 focus-visible:ring-rose-400"
+                    : "border-slate-200"
+                }`}
+              />
+              <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              {phoneTouched && phone.length > 0 && (
+                isPhoneValid ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 absolute right-3 top-3" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-500 absolute right-3 top-3" />
+                )
+              )}
+            </div>
+
+            {/* Live feedback */}
+            {phoneTouched && phone.trim().length > 0 ? (
+              isPhoneValid ? (
+                <p className="text-[11px] text-emerald-600 font-medium mt-1 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span>Format nomor valid: {phoneValidation.localDisplay} (WhatsApp Terhubung)</span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-rose-600 font-medium mt-1">
+                  {phoneValidation.error}
+                </p>
+              )
+            ) : (
+              <p className="text-[11px] text-slate-500 mt-1">
+                Wajib nomor WhatsApp terdaftar. Update status screening AI dan undangan interview akan dikirimkan ke nomor ini.
+              </p>
+            )}
           </div>
 
           {/* CV File Upload Dropzone */}

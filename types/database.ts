@@ -13,6 +13,7 @@ export interface Profile {
   id: string;
   user_id: string;
   full_name: string;
+  phone?: string | null;
   role: UserRole;
   created_at: string;
 }
@@ -188,6 +189,7 @@ export interface Application {
   interview_duration_seconds?: number | null;
   interview_transcript_json?: InterviewSessionTranscript | Record<string, unknown> | null;
   created_at: string;
+  phone?: string | null;
   job?: Job;
   candidate?: Profile;
 }
