@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Briefcase, FileText, LogOut, Shield, User, Sparkles } from "lucide-react";
 import { Profile } from "@/types/database";
 import { cn } from "@/lib/utils";
+import { HermesStatusBadge } from "@/components/hermes-status-badge";
 
 interface NavbarProps {
   profile: Profile | null;
@@ -75,6 +76,11 @@ export function Navbar({ profile }: NavbarProps) {
 
         {/* User Actions */}
         <div className="flex items-center gap-3">
+          {/* Hermes Status Indicator */}
+          <div className="hidden sm:block">
+            <HermesStatusBadge variant="user" />
+          </div>
+
           {profile ? (
             <div className="flex items-center gap-3">
               {profile.role === "admin" && (

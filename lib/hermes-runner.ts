@@ -1,6 +1,7 @@
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
+import { getHermesConfig } from "./hermes-config";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,7 +60,8 @@ function execSshHermes(
       sshArgs.push("-i", keyPath);
     }
 
-    const modelToUse = process.env.HERMES_MODEL || "agnes-2.5-flash";
+    const config = getHermesConfig();
+    const modelToUse = config.model || "agnes-2.5-flash";
     sshArgs.push(`${vpsUser}@${vpsHost}`, `hermes -m "${modelToUse}" -z "$(cat)"`);
 
     const child = spawn("ssh", sshArgs, {
@@ -111,12 +113,13 @@ async function callHermesCli(
   cliPathOverride?: string,
   timeoutMs = 60000
 ): Promise<string> {
-  const vpsHost = process.env.HERMES_VPS_HOST;
+  const config = getHermesConfig();
+  const vpsHost = config.vpsHost;
 
   // 1. If HERMES_VPS_HOST is configured, prioritize VPS Remote Hermes Agent
-  if (vpsHost && (!process.env.HERMES_TARGET || process.env.HERMES_TARGET === "vps")) {
-    const vpsPort = process.env.HERMES_VPS_PORT || "4422";
-    const vpsUser = process.env.HERMES_VPS_USER || "root";
+  if (vpsHost && (!config.target || config.target === "vps")) {
+    const vpsPort = config.vpsPort || "4422";
+    const vpsUser = config.vpsUser || "root";
     try {
       const output = await execSshHermes(vpsUser, vpsHost, vpsPort, combinedPrompt, timeoutMs);
       if (output && output.trim().length > 0) {
@@ -130,6 +133,7 @@ async function callHermesCli(
   // 2. Local CLI binary fallback
   const possiblePaths = [
     cliPathOverride,
+    config.cliPath,
     process.env.HERMES_CLI_PATH,
     "/usr/local/bin/hermes",
     "hermes",
@@ -152,7 +156,7 @@ async function callHermesCli(
     PATH: `${process.env.HOME || ""}/.local/bin:${process.env.HOME || ""}/.hermes/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`,
   };
 
-  const modelToUse = process.env.HERMES_MODEL || "agnes-2.5-flash";
+  const modelToUse = config.model || "agnes-2.5-flash";
   const { stdout, stderr } = await execFileAsync(
     selectedCli,
     ["-m", modelToUse, "-z", combinedPrompt],
@@ -177,19 +181,23 @@ async function callHermesApi(
   params: HermesCallParams,
   timeoutMs = 45000
 ): Promise<{ content: string; model: string }> {
+  const config = getHermesConfig();
   const effectiveTimeout = params.timeoutMs || timeoutMs || 45000;
   const baseUrl =
+    config.baseUrl ||
     process.env.HERMES_BASE_URL ||
     process.env.NARA_ROUTER_BASE_URL ||
     "https://router.bynara.id/v1";
 
   const apiKey =
+    config.apiKey ||
     process.env.HERMES_API_KEY ||
     process.env.NARA_ROUTER_API_KEY ||
     "sk-nry-kZaU_a5GHRP3DdqZBwYoeOXRm-hExbYYNjyBkyg8-y8";
 
   const primaryModel =
     params.modelOverride ||
+    config.model ||
     process.env.HERMES_MODEL ||
     process.env.NARA_ROUTER_MODEL ||
     "agnes-2.5-flash";
@@ -276,14 +284,15 @@ async function callHermesApi(
  * Automatically uses Local/VPS Hermes CLI (if enabled) and gracefully falls back to API.
  */
 export async function runHermesAgent(params: HermesCallParams): Promise<HermesCallResponse> {
-  const mode = (process.env.HERMES_MODE || "cli").toLowerCase();
+  const config = getHermesConfig();
+  const mode = (config.mode || "cli").toLowerCase();
   const startTime = Date.now();
 
   // Mode 1: Try CLI first if mode is 'cli'
   if (mode === "cli") {
     try {
-      const isVps = !!process.env.HERMES_VPS_HOST && (!process.env.HERMES_TARGET || process.env.HERMES_TARGET === "vps");
-      const targetLabel = isVps ? `VPS: ${process.env.HERMES_VPS_HOST || "103.30.146.87"}` : "Local Machine";
+      const isVps = !!config.vpsHost && (!config.target || config.target === "vps");
+      const targetLabel = isVps ? `VPS: ${config.vpsHost}` : "Local Machine";
       const routeType = isVps ? "CLI / VPS" : "CLI / LOCAL";
       console.log(`\n\x1b[1m\x1b[35m[HERMES ROUTE: ${routeType}]\x1b[0m 🖥️  Mengeksekusi melalui \x1b[32mHermes Agent Framework CLI (${targetLabel})\x1b[0m...`);
       

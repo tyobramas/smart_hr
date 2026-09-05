@@ -15,6 +15,7 @@ import {
   Award,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
+import { HermesStatusBadge } from "@/components/hermes-status-badge";
 
 export default async function AdminDashboardPage() {
   const supabase = await createClient();
@@ -102,6 +103,9 @@ export default async function AdminDashboardPage() {
           </Link>
         </div>
       </div>
+
+      {/* Realtime Hermes Infrastructure & VPS Status Card */}
+      <HermesStatusBadge variant="card" />
 
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">

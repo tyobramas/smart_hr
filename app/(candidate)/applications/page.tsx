@@ -5,6 +5,7 @@ import { requireProfile } from "@/lib/supabase/auth";
 import { Application, Job } from "@/types/database";
 import { CandidateApplicationRow } from "@/components/candidate-application-row";
 import { FileText, Briefcase, ArrowRight } from "lucide-react";
+import { HermesStatusBadge } from "@/components/hermes-status-badge";
 
 export default async function CandidateApplicationsPage() {
   const { profile } = await requireProfile();
@@ -26,8 +27,11 @@ export default async function CandidateApplicationsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Riwayat Lamaran Saya</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold text-slate-900">Riwayat Lamaran Saya</h1>
+            <HermesStatusBadge variant="user" />
+          </div>
+          <p className="text-xs text-slate-500 mt-1">
             Pantau status seleksi dan hasil evaluasi CV untuk setiap lowongan yang Anda lamar
           </p>
         </div>
