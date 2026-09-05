@@ -52,6 +52,8 @@ export async function sendWhatsAppViaHermes(
     ? normalizedPhone
     : `${normalizedPhone}@s.whatsapp.net`;
 
+  console.log(`[WhatsApp:Dispatch] URL: ${gatewayUrl}/send | To: ${chatId}`);
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -73,6 +75,7 @@ export async function sendWhatsAppViaHermes(
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`[WhatsApp:Response] Status: ${response.status} | Error: ${errorText || response.statusText}`);
       return {
         success: false,
         error: `HTTP ${response.status}: ${errorText || response.statusText}`,
@@ -85,12 +88,15 @@ export async function sendWhatsAppViaHermes(
       key?: { id?: string };
     };
     const messageId = data.messageId || data.id || data.key?.id || `hermes_wa_${Date.now()}`;
+    console.log(`[WhatsApp:Response] Status: ${response.status} | ProviderId: ${messageId}`);
+
     return {
       success: true,
       messageId,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error(`[WhatsApp:Response] Status: Error | Error: ${message}`);
     return {
       success: false,
       error: `Gagal menghubungi Hermes Gateway di ${gatewayUrl}: ${message}`,

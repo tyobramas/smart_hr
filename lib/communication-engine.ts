@@ -274,9 +274,13 @@ export async function checkCommunicationEligibility(
       .maybeSingle();
 
     if (!dedupErr && existingEvent) {
+      const reason = `duplicate: event '${eventType}' (${channel}) already recorded with status '${existingEvent.status}'.`;
+      console.log(
+        `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: false | Reason: ${reason}`
+      );
       return {
         eligible: false,
-        reason: `duplicate: event '${eventType}' (${channel}) already recorded with status '${existingEvent.status}'.`,
+        reason,
       };
     }
   } catch {
@@ -290,44 +294,117 @@ export async function checkCommunicationEligibility(
       .maybeSingle();
 
     if (existingLegacy && channel === "email") {
+      const reason = `duplicate: event '${eventType}' already recorded with status '${existingLegacy.status}'.`;
+      console.log(
+        `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: false | Reason: ${reason}`
+      );
       return {
         eligible: false,
-        reason: `duplicate: event '${eventType}' already recorded with status '${existingLegacy.status}'.`,
+        reason,
       };
     }
   }
 
-  // 2. Global candidate cooldown: Has any communication been sent to this candidate in the last 10 minutes?
-  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const { data: recentCandidateComms } = await supabase
-    .from("communication_logs")
-    .select("id, created_at")
-    .eq("candidate_id", candidateId)
-    .gte("created_at", tenMinutesAgo)
-    .eq("status", "sent")
-    .limit(1);
+  // 2. Cooldown check:
+  const ignoreCooldown = process.env.COMMUNICATION_IGNORE_COOLDOWN === "true";
+  if (ignoreCooldown) {
+    console.log("[CommEngine:Eligibility] ⚠️ Cooldown di-bypass karena COMMUNICATION_IGNORE_COOLDOWN=true.");
+  } else {
+    // Paired application events exemption:
+    // If event is screening outcome (screening_passed, screening_rejected, screening_review)
+    // following application_received within the same application lifecycle (< 5 minutes), allow it!
+    const isScreeningOutcome =
+      eventType === "screening_passed" ||
+      eventType === "screening_rejected" ||
+      eventType === "screening_review";
 
-  if (recentCandidateComms && recentCandidateComms.length > 0) {
-    return {
-      eligible: false,
-      reason: "global_cooldown: candidate received a communication within the last 10 minutes.",
-    };
+    let isExemptPairedEvent = false;
+    if (isScreeningOutcome) {
+      try {
+        const { data: appReceivedLog } = await supabase
+          .from("communication_logs")
+          .select("id, created_at")
+          .eq("application_id", applicationId)
+          .eq("event_type", "application_received")
+          .eq("channel", channel)
+          .maybeSingle();
+
+        if (appReceivedLog) {
+          const timeDiffMs = Date.now() - new Date(appReceivedLog.created_at).getTime();
+          if (timeDiffMs < 5 * 60 * 1000) {
+            isExemptPairedEvent = true;
+            console.log(
+              `[CommEngine:Eligibility] ℹ️ Cooldown dikecualikan untuk event berpasangan instan: '${eventType}' mengikuti 'application_received' (${Math.round(timeDiffMs / 1000)}s lalu).`
+            );
+          }
+        }
+      } catch (pairedErr) {
+        console.warn("[CommEngine:Eligibility] Paired event lookup warning:", pairedErr);
+      }
+    }
+
+    if (!isExemptPairedEvent) {
+      // Global candidate cooldown: Channel-independent (check ONLY this specific channel!)
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      let commsQuery = supabase
+        .from("communication_logs")
+        .select("id, event_type, created_at")
+        .eq("candidate_id", candidateId)
+        .gte("created_at", tenMinutesAgo)
+        .eq("status", "sent");
+
+      try {
+        const { data: recentCandidateComms } = await commsQuery
+          .eq("channel", channel)
+          .limit(1);
+
+        if (recentCandidateComms && recentCandidateComms.length > 0) {
+          const reason = `global_cooldown: candidate received a ${channel} communication within the last 10 minutes (${recentCandidateComms[0].event_type}).`;
+          console.log(
+            `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: false | Reason: ${reason}`
+          );
+          return {
+            eligible: false,
+            reason,
+          };
+        }
+      } catch {
+        const { data: recentCommsLegacy } = await commsQuery.limit(1);
+        if (recentCommsLegacy && recentCommsLegacy.length > 0 && channel === "email") {
+          const reason = "global_cooldown: candidate received an email within the last 10 minutes.";
+          console.log(
+            `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: false | Reason: ${reason}`
+          );
+          return {
+            eligible: false,
+            reason,
+          };
+        }
+      }
+    }
   }
 
-  // 3. Lifetime cap per application: Maximum 8 communications across entire lifecycle
+  // 3. Lifetime cap per application: Maximum 16 communications (8 per channel)
   const { count: totalSentCount } = await supabase
     .from("communication_logs")
     .select("id", { count: "exact", head: true })
     .eq("application_id", applicationId)
     .in("status", ["queued", "sent"]);
 
-  if (totalSentCount !== null && totalSentCount >= 8) {
+  if (totalSentCount !== null && totalSentCount >= 16) {
+    const reason = "lifetime_cap: application has reached the maximum cap of lifecycle communications.";
+    console.log(
+      `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: false | Reason: ${reason}`
+    );
     return {
       eligible: false,
-      reason: "lifetime_cap: application has reached the maximum cap of 8 lifecycle communications.",
+      reason,
     };
   }
 
+  console.log(
+    `[CommEngine:Eligibility] Candidate: ${candidateId} | Event: ${eventType} | Channel: ${channel} | Allowed: true`
+  );
   return { eligible: true };
 }
 
@@ -499,6 +576,21 @@ async function recordCommunicationLog(
     .maybeSingle();
 
   if (error) {
+    // If status 'skipped' violates check constraint (migration pending on Postgres), fallback to 'failed' with [SKIPPED] prefix
+    if (error.code === "23514" && payload.status === "skipped") {
+      const fallbackPayload = {
+        ...payload,
+        status: "failed" as CommunicationStatus,
+        error_message: `[SKIPPED] ${payload.error_message || ""}`.trim(),
+      };
+      const { data: fbData } = await supabase
+        .from("communication_logs")
+        .insert(fallbackPayload)
+        .select("id")
+        .maybeSingle();
+      return fbData?.id || null;
+    }
+
     // If column 'channel' or 'phone_to' does not exist yet (migration pending), retry without them
     if (error.code === "42703" || error.message?.includes("channel") || error.message?.includes("phone_to")) {
       const { channel, phone_to, ...legacyPayload } = payload;
@@ -534,12 +626,39 @@ async function dispatchEmailChannel(
   // 1. Eligibility check
   const eligibility = await checkCommunicationEligibility(applicationId, candidateId, eventType, "email");
   if (!eligibility.eligible) {
-    console.log(`[CommEngine] Skipped email '${eventType}' for app ${applicationId}: ${eligibility.reason}`);
+    console.warn(`[CommEngine:Skipped] Email '${eventType}' untuk app ${applicationId} di-skip: ${eligibility.reason}`);
+
+    // Record skipped log in communication_logs
+    await recordCommunicationLog(supabase, {
+      application_id: applicationId,
+      candidate_id: candidateId,
+      job_id: jobId,
+      event_type: eventType,
+      channel: "email",
+      email_to: emailTo,
+      phone_to: null,
+      email_subject: `Email Notification: ${eventType}`,
+      email_body_html: "",
+      email_body_text: null,
+      status: "skipped",
+      error_message: eligibility.reason,
+    });
+
     return { success: true, skipped: true, reason: eligibility.reason };
   }
 
   // 2. Generate content with Hermes
+  console.log(`[CommEngine:Hermes:Start] Generating content for ${eventType} (email) via Hermes...`);
+  const startTime = Date.now();
   const generated = await generateEmailContent(eventType, context);
+  const elapsed = Date.now() - startTime;
+  console.log(
+    `[CommEngine:Hermes:Done] Content generated in ${elapsed}ms using model: ${generated.hermes_model || generated.modelUsed}`
+  );
+  console.log(
+    `[CommEngine:Hermes:Preview] Body snippet: "${(generated.body_text || "").slice(0, 100).replace(/\n/g, " ")}..."`
+  );
+
   let hermesErrorMessage: string | null = null;
   if (generated.hermes_error) {
     hermesErrorMessage = `[Fallback Used] Hermes Failed: ${generated.hermes_error}`;
@@ -628,11 +747,12 @@ async function dispatchWhatsAppChannel(
 
   // Multi-Tier Phone Number Check: Missing Phone Handling
   if (!phoneTo) {
+    const reason = "Phone number missing: candidate has no registered phone in profile, auth metadata, or CV extraction.";
     console.warn(
       `[CommunicationEngine:Warning] Nomor WhatsApp kandidat tidak ditemukan untuk application_id: ${applicationId}. Dispatch WhatsApp dilewati.`
     );
 
-    // Record skipped/failed log transparently in communication_logs
+    // Record skipped log transparently in communication_logs
     await recordCommunicationLog(supabase, {
       application_id: applicationId,
       candidate_id: candidateId,
@@ -644,27 +764,54 @@ async function dispatchWhatsAppChannel(
       email_subject: `WhatsApp Notification: ${eventType}`,
       email_body_html: "",
       email_body_text: null,
-      status: "failed",
-      error_message: "Phone number missing",
+      status: "skipped",
+      error_message: reason,
     });
 
     return {
       success: false,
       skipped: true,
-      reason: "Phone number missing",
-      error: "Phone number missing",
+      reason,
+      error: reason,
     };
   }
 
   // 1. Eligibility check
   const eligibility = await checkCommunicationEligibility(applicationId, candidateId, eventType, "whatsapp");
   if (!eligibility.eligible) {
-    console.log(`[CommEngine] Skipped WhatsApp '${eventType}' for app ${applicationId}: ${eligibility.reason}`);
+    console.warn(`[CommEngine:Skipped] WhatsApp '${eventType}' untuk app ${applicationId} di-skip: ${eligibility.reason}`);
+
+    // Record skipped log in communication_logs
+    await recordCommunicationLog(supabase, {
+      application_id: applicationId,
+      candidate_id: candidateId,
+      job_id: jobId,
+      event_type: eventType,
+      channel: "whatsapp",
+      email_to: emailTo || "",
+      phone_to: phoneTo,
+      email_subject: `WhatsApp Notification: ${eventType}`,
+      email_body_html: "",
+      email_body_text: null,
+      status: "skipped",
+      error_message: eligibility.reason,
+    });
+
     return { success: true, skipped: true, reason: eligibility.reason };
   }
 
   // 2. Generate WhatsApp formatted content with Hermes
+  console.log(`[CommEngine:Hermes:Start] Generating content for ${eventType} (whatsapp) via Hermes...`);
+  const startTime = Date.now();
   const generated = await generateWhatsAppContent(eventType, context);
+  const elapsed = Date.now() - startTime;
+  console.log(
+    `[CommEngine:Hermes:Done] Content generated in ${elapsed}ms using model: ${generated.hermes_model}`
+  );
+  console.log(
+    `[CommEngine:Hermes:Preview] Body snippet: "${(generated.message || "").slice(0, 100).replace(/\n/g, " ")}..."`
+  );
+
   let hermesErrorMessage: string | null = null;
   if (generated.hermes_error) {
     hermesErrorMessage = `[Fallback Used] Hermes Failed: ${generated.hermes_error}`;

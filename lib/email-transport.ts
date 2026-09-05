@@ -68,6 +68,8 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
   const fromAddress = process.env.EMAIL_FROM_ADDRESS || "onboarding@resend.dev";
   const from = `${fromName} <${fromAddress}>`;
 
+  console.log(`[Email:Dispatch] To: ${params.to} | Subject: ${params.subject}`);
+
   try {
     const { data, error } = await resend.emails.send({
       from,
@@ -79,20 +81,21 @@ export async function sendEmail(params: SendEmailParams): Promise<SendEmailResul
     });
 
     if (error) {
-      console.error("[EmailTransport] Resend delivery error:", error);
+      console.error(`[Email:Response] Success: false | Error: ${error.message}`);
       return {
         success: false,
         error: error.message,
       };
     }
 
+    console.log(`[Email:Response] Success: true | Id: ${data?.id || "N/A"}`);
     return {
       success: true,
       messageId: data?.id,
     };
   } catch (err: any) {
     const errMsg = err?.message || "Unknown error during Resend email dispatch";
-    console.error("[EmailTransport] Dispatch exception:", errMsg);
+    console.error(`[Email:Response] Success: false | Error: ${errMsg}`);
     return {
       success: false,
       error: errMsg,

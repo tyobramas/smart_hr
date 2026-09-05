@@ -208,7 +208,7 @@ export type CommunicationEventType =
   | 'interview_expired'
   | 'final_rejection';
 
-export type CommunicationStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'opened';
+export type CommunicationStatus = 'queued' | 'sent' | 'failed' | 'bounced' | 'opened' | 'skipped';
 
 export type CommunicationChannel = 'email' | 'whatsapp';
 
