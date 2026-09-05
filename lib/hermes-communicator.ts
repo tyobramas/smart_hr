@@ -173,16 +173,22 @@ Instruksi: Sampaikan terima kasih yang sebesar-besarnya atas komitmen dan waktu 
 }
 
 function parseHermesResponse(raw: string): { subject: string; body_html: string; body_text: string; internal_tone_notes: string } {
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Hermes response does not contain a JSON object.");
-  }
+  let cleaned = (raw || "").trim();
 
-  const jsonStr = jsonMatch[0];
-  let parsed: any;
+  // Strip markdown code fences
+  cleaned = cleaned.replace(/^```(?:json)?\s*/im, "").replace(/\s*```$/im, "").trim();
+
+  const startIdx = cleaned.indexOf("{");
+  const endIdx = cleaned.lastIndexOf("}");
+  const jsonStr = startIdx !== -1 && endIdx > startIdx ? cleaned.substring(startIdx, endIdx + 1) : cleaned;
+
+  let parsed: any = null;
+
+  // Stage 1: Native JSON.parse
   try {
     parsed = JSON.parse(jsonStr);
-  } catch (initialErr) {
+  } catch {
+    // Stage 2: Sanitize control characters & raw newlines in string values
     try {
       const sanitized = jsonStr
         .replace(/(?<=:\s*"[^"]*)\n(?=[^"]*")/g, "\\n")
@@ -190,18 +196,54 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
         .replace(/(?<=:\s*"[^"]*)\t(?=[^"]*")/g, "\\t");
       parsed = JSON.parse(sanitized);
     } catch {
-      const sanitized2 = jsonStr.replace(/[\u0000-\u001F\u007F-\u009F]/g, (c) => {
-        if (c === "\n") return "\\n";
-        if (c === "\r") return "\\r";
-        if (c === "\t") return "\\t";
-        return "";
-      });
-      parsed = JSON.parse(sanitized2);
+      // Stage 3: Normalize unquoted keys, single quotes, trailing commas
+      try {
+        const repaired = jsonStr
+          .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":') // unquoted keys
+          .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')        // single-quoted keys
+          .replace(/:\s*'([^']*)'/g, ': "$1"')                   // single-quoted values
+          .replace(/,\s*([}\]])/g, "$1");                         // trailing commas
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Stage 4: Safe Function evaluation for JavaScript object literal syntax
+        try {
+          const fn = new Function("return (" + jsonStr + ")");
+          const res = fn();
+          if (res && typeof res === "object") {
+            parsed = res;
+          }
+        } catch {
+          // Stage 5: Regex fallback field extraction
+          const subjectMatch = raw.match(/["']?subject["']?\s*:\s*["']([^"']+)["']/i);
+          const bodyHtmlMatch = raw.match(/["']?body_html["']?\s*:\s*["']([\s\S]+?)["']\s*(?:,\s*["']?(?:body_text|internal_tone_notes)["']?|\s*\})/i);
+          const bodyTextMatch = raw.match(/["']?body_text["']?\s*:\s*["']([\s\S]+?)["']\s*(?:,\s*["']?internal_tone_notes["']?|\s*\})/i);
+
+          if (subjectMatch && (bodyHtmlMatch || bodyTextMatch)) {
+            parsed = {
+              subject: subjectMatch[1],
+              body_html: bodyHtmlMatch ? bodyHtmlMatch[1] : (bodyTextMatch ? `<p>${bodyTextMatch[1]}</p>` : ""),
+              body_text: bodyTextMatch ? bodyTextMatch[1] : (bodyHtmlMatch ? bodyHtmlMatch[1].replace(/<[^>]+>/g, "") : ""),
+            };
+          }
+        }
+      }
     }
   }
 
-  if (!parsed.subject || !parsed.body_html || !parsed.body_text) {
-    throw new Error("Hermes JSON is missing required fields (subject, body_html, body_text).");
+  if (!parsed) {
+    throw new Error("Hermes response could not be parsed into a JSON object.");
+  }
+
+  if (!parsed.subject || (!parsed.body_html && !parsed.body_text)) {
+    throw new Error("Hermes JSON is missing required fields (subject, body_html, or body_text).");
+  }
+
+  if (!parsed.body_html && parsed.body_text) {
+    parsed.body_html = `<p>${parsed.body_text.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br/>")}</p>`;
+  }
+
+  if (!parsed.body_text && parsed.body_html) {
+    parsed.body_text = parsed.body_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   }
 
   if (parsed.subject.length > 100) {
@@ -219,6 +261,7 @@ function parseHermesResponse(raw: string): { subject: string; body_html: string;
     internal_tone_notes: parsed.internal_tone_notes || "Normal",
   };
 }
+
 
 /**
  * Fallback template generator in case AI connection is unreachable
